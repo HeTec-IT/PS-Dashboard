@@ -581,6 +581,12 @@ body:not(.exporting) .offer-print-grid[data-maximized] > .ps-off-card.ps-max { g
 .ps-max-btn.active { background: #2563eb; color: #fff; }
 @media print { .ps-max-btn { display: none !important; } }
 body.exporting .ps-max-btn { display: none !important; }
+/* v53w: Shop-Auswahl ist ein reines Bedienelement – niemals im PDF/Druck.
+   Zwei Regeln noetig: @media print fuer den Browser-Druck, body.exporting
+   fuer den PDF-Export (html2canvas kennt @media print nicht). */
+@media print { .ps-shop-switch { display: none !important; } }
+body.exporting .ps-shop-switch { display: none !important; }
+body.pdf-share-mode .ps-shop-switch { display: none !important; }
 .sit-card-grid button,
 .sit-card-grid button *,
 .sit-question-chips,
@@ -4221,6 +4227,31 @@ body.pdf-share-mode .offer-canvas-container:has(.offer-html-overlay-wrap) .offer
             }
         })();
         try { window.__LINK_EMPLOYEE = LINK_EMPLOYEE || ''; } catch(e) {}
+
+        // ═══════════════════════════════════════════════════════════════
+        // v53v: SHOP-WECHSEL-BERECHTIGUNG  (?shopwechsel=1)
+        // ───────────────────────────────────────────────────────────────
+        // Bisher war das Shop-Dropdown fest an "Diego da Silva" gebunden.
+        // Wer wechseln koennen sollte, haette unter fremdem Namen arbeiten
+        // muessen – die Statistik waere dadurch falsch geworden.
+        // Jetzt entscheidet ein eigener Link-Parameter darueber, unabhaengig
+        // vom Mitarbeiternamen. Wird wie der Agent gemerkt, damit ein
+        // Lesezeichen ohne Parameter weiter funktioniert.
+        // ═══════════════════════════════════════════════════════════════
+        const LINK_SHOPWECHSEL = (() => {
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                const roh = params.get('shopwechsel') || params.get('sw') || '';
+                if (roh !== '') {
+                    const an = (roh === '1' || roh.toLowerCase() === 'true' || roh.toLowerCase() === 'ja');
+                    try { localStorage.setItem('ps_shopwechsel', an ? '1' : '0'); } catch(_) {}
+                    return an;
+                }
+                try { if (localStorage.getItem('ps_shopwechsel') === '1') return true; } catch(_) {}
+            } catch(e) {}
+            return false;
+        })();
+        try { window.__LINK_SHOPWECHSEL = LINK_SHOPWECHSEL; } catch(e) {}
 
 
         // --- 0. ICONS ---
@@ -17908,6 +17939,50 @@ const resumeParkedArchive = async (entry, rufValue) => {
                         <span>{darkMode ? '🌙' : '☀️'}</span>
                     </button>}
                     <h1 className="ps-main-title text-2xl font-black text-[#0b1e42] tracking-tighter flex-1 min-w-0 overflow-hidden" style={{whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{view === 'situation' ? 'Ihre Aktuelle Situation' : 'Ihr Persönliches Angebot'}</h1>
+                    {/* ══════════════════════════════════════════════════════════
+                        v53w: SHOP-WECHSEL OBEN RECHTS (nur Seite 1)
+                        ──────────────────────────────────────────────────────────
+                        Bewusst auf der Situations-Seite: Dort steht der Verkaeufer,
+                        BEVOR er schreibt. Auf Seite 2 (Stempel) waere der Wechsel
+                        zu spaet – da sind die Eingaben schon gemacht und gingen
+                        beim noetigen Neuladen verloren.
+                        Neu geladen werden MUSS, weil der Shop nicht nur im Stempel
+                        steckt, sondern auch in Deckblatt, Adresse, Gutschein-Code,
+                        Bewertungslink, Statistik und Archiv-Dateiname.
+                       ══════════════════════════════════════════════════════════ */}
+                    {view === 'situation' && (LINK_EMPLOYEE === 'Diego da Silva' || LINK_SHOPWECHSEL) && (
+                        <div className="ps-shop-switch no-print print-hide-toast" style={{display:'flex',alignItems:'center',gap:'6px',flexShrink:0,marginRight:'6px'}}>
+                            <span style={{fontSize:'9px',fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.05em',whiteSpace:'nowrap'}}>Shop</span>
+                            <select
+                                value={CURRENT_SHOP_ID}
+                                onChange={(e) => {
+                                    const neu = e.target.value;
+                                    if (!neu || neu === CURRENT_SHOP_ID) return;
+                                    const hatInhalt = (() => {
+                                        try {
+                                            const t = Object.values(textData || {}).some(v => String(v || '').trim() !== '');
+                                            const d = Object.values(drawnStrokes || {}).some(a => Array.isArray(a) && a.length > 0);
+                                            return t || d;
+                                        } catch(_) { return false; }
+                                    })();
+                                    if (hatInhalt && !window.confirm('Shop wechseln?\n\nDie Seite wird neu geladen, damit Deckblatt, Adresse und Gutschein-Code zum neuen Shop passen.\nNicht gespeicherte Eingaben gehen verloren.')) return;
+                                    try { localStorage.setItem('ps_shop', neu); } catch(_) {}
+                                    try {
+                                        const u = new URL(window.location.href);
+                                        u.searchParams.set('shop', neu);
+                                        window.__psIntentionalReload = true;
+                                        window.location.replace(u.toString());
+                                    } catch(_) { window.location.reload(); }
+                                }}
+                                title="Shop wechseln – die Seite wird dabei neu geladen"
+                                style={{fontSize:'11px',fontWeight:800,color:'#0f172a',background:'#f8fafc',border:'1.5px solid #e2e8f0',borderRadius:'8px',padding:'5px 8px',outline:'none',cursor:'pointer',maxWidth:'190px'}}>
+                                {Object.keys(SHOPS).map(id => (
+                                    <option key={id} value={id}>{SHOPS[id].name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
                     {/* Beratungs-ID — nur im Offer-View im Header */}
                     {view === 'offer' && (
                         <div style={{display:'flex',alignItems:'center',gap:'5px',flexShrink:0,marginRight:'4px'}}>
@@ -19398,48 +19473,12 @@ const resumeParkedArchive = async (entry, rufValue) => {
                                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">{renderOfferInput('agent', 'AgentLabel', 'text')}{renderOfferInput('datum', 'DateLabel', 'text')}{renderOfferInput('gueltig', 'ValidUntilLabel', 'date')}<div className="col-span-2">
   <div className="h-12 w-full bg-white border border-slate-300 rounded-lg overflow-hidden flex items-stretch">
     {/* Shop-Stempel (fix links) – QR-Code entfernt (v56), nur Text.
-        v53u: Fuer Diego als Auswahl. WICHTIG – warum neu geladen wird:
-        Der Shop steckt nicht nur im Stempel, sondern auch im Deckblatt,
-        in der Adresse, im Gutschein-Code, im Google-Bewertungslink, in der
-        Statistik und im Archiv-Dateinamen. Wuerde hier nur der Stempel
-        umgeschaltet, entstuende ein widerspruechliches PDF (Stempel
-        Crailsheim, Deckblatt Aalen). Deshalb setzt die Auswahl den Shop
-        und laedt die Seite mit ?shop=... neu – dann stimmt alles. */}
+        v53w: Bewusst FEST, keine Auswahl. Der Shop wird auf Seite 1 oben
+        rechts gewechselt – dort, bevor etwas eingetragen wurde. */}
     <div className="shrink-0 flex items-center gap-2 px-3 bg-slate-50 border-r border-slate-200">
       <div className="flex flex-col leading-tight">
         <span className="text-[10px] font-black text-slate-700 uppercase tracking-wide">Stempel</span>
-        {LINK_EMPLOYEE === 'Diego da Silva' ? (
-          <select
-            value={CURRENT_SHOP_ID}
-            onChange={(e) => {
-              const neu = e.target.value;
-              if (!neu || neu === CURRENT_SHOP_ID) return;
-              const hatInhalt = (() => {
-                try {
-                  const t = Object.values(textData || {}).some(v => String(v || '').trim() !== '');
-                  const d = Object.values(drawnStrokes || {}).some(a => Array.isArray(a) && a.length > 0);
-                  return t || d;
-                } catch(_) { return false; }
-              })();
-              if (hatInhalt && !window.confirm('Shop wechseln?\n\nDie Seite wird neu geladen, damit Deckblatt, Adresse und Gutschein-Code zum neuen Shop passen.\nNicht gespeicherte Eingaben gehen verloren.')) return;
-              try { localStorage.setItem('ps_shop', neu); } catch(_) {}
-              try {
-                const u = new URL(window.location.href);
-                u.searchParams.set('shop', neu);
-                window.__psIntentionalReload = true;
-                window.location.replace(u.toString());
-              } catch(_) { window.location.reload(); }
-            }}
-            className="text-[11px] font-bold text-slate-800 bg-transparent border-none outline-none cursor-pointer p-0 -ml-0.5"
-            style={{maxWidth:'130px'}}
-            title="Shop wechseln (nur Admin) – Seite wird neu geladen">
-            {Object.keys(SHOPS).map(id => (
-              <option key={id} value={id}>{SHOPS[id].name}</option>
-            ))}
-          </select>
-        ) : (
-          <span className="text-[11px] font-bold text-slate-800 whitespace-nowrap">{SHOP_STAMP_TEXT}</span>
-        )}
+        <span className="text-[11px] font-bold text-slate-800 whitespace-nowrap">{SHOP_STAMP_TEXT}</span>
       </div>
     </div>
     {/* Kunden-Unterschrift (rechts, ohne Layout-Shift) */}
