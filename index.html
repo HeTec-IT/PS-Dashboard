@@ -9383,9 +9383,12 @@ function buildMidpointPath(ctx, fp) {
             inputMode, canvasRef, inputKey,
             inputValue = '', inputType = 'text', onChange, placeholder,
             drawnStrokes, setDrawnStrokes, readOnly = false,
-            startDrawing, draw, stopDrawing, triggerRedraw
+            startDrawing, draw, stopDrawing, triggerRedraw,
+            forceKeyboard = false
         }) => {
-            const isPen = inputMode === 'pen';
+            // forceKeyboard: Felder wie 'Angebot gültig bis' brauchen einen echten
+            // Datepicker – Handschrift ergibt dort keinen gültigen Datumswert.
+            const isPen = inputMode === 'pen' && !forceKeyboard;
 
             useEffect(() => {
                 const canvas = canvasRef.current;
@@ -9414,6 +9417,7 @@ function buildMidpointPath(ctx, fp) {
                         onChange={onChange}
                         readOnly={readOnly || isPen}
                         placeholder={isPen ? '' : placeholder}
+                        onClick={inputType === 'date' ? (e) => { try { e.target.showPicker && e.target.showPicker(); } catch (err) {} } : undefined}
                         className="absolute inset-0 w-full h-full p-2 text-sm font-medium text-slate-700 bg-transparent focus:ring-1 focus:ring-blue-300 transition-colors focus:outline-none"
                         style={{ fontSize: '15px', paddingLeft: '8px', zIndex: isPen ? 2 : 15, pointerEvents: isPen ? 'none' : 'auto', userSelect: isPen ? 'none' : 'text' }}
                     />
@@ -14083,7 +14087,7 @@ const renderPenToolButtons = () => {
                 const rawKey = `${key}Raw`;
                 setOfferData(prev => ({ ...prev, [rawKey]: value, [key]: isNaN(val) || value.trim() === '' ? 0 : val }));
             };
-            const renderOfferInput = (key, labelKey, type = 'text') => { let ref, rawValue, strokesKey; const label = getStaticLabel(labelKey); if (key === 'einmalig' || key === 'monatlich1' || key === 'monatlich2' || key === 'smartphone') { ref = (key === 'einmalig' ? offerCost1Ref : key === 'monatlich1' ? offerCost2Ref : key === 'monatlich2' ? offerCost3Ref : offerCostSmartphoneRef); rawValue = offerData[`${key}Raw`] ?? ''; strokesKey = `cost_${key}`; } else if (key === 'agent') { ref = offerAgentRef; rawValue = getDisplayText('AgentName'); strokesKey = 'agent_name'; } else if (key === 'datum') { ref = offerDateRef; rawValue = getDisplayText('DateValue'); strokesKey = 'date_field'; } else if (key === 'gueltig') { ref = offerValidUntilRef; rawValue = getDisplayText('OfferValidUntil'); strokesKey = 'offer_valid_until'; } const isCostField = key.startsWith('monatlich') || key === 'einmalig' || key === 'smartphone'; const handleChange = (e) => { if (isCostField) { handleOfferCostChange(key, e.target.value); } else if (key === 'agent') { handleTextChange('AgentName', e.target.value); } else if (key === 'datum') { handleTextChange('DateValue', e.target.value); } else if (key === 'gueltig') { handleTextChange('OfferValidUntil', e.target.value); } }; const inputHeightClass = 'h-12'; return (<div className="flex flex-col"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">{label}</label><div className={`relative ${inputHeightClass} ${isCostField ? 'bg-slate-50' : 'bg-white'} border border-slate-300 rounded-lg transition-all`}><SmallInputCanvas inputMode={inputMode} canvasRef={ref} inputKey={strokesKey} inputValue={rawValue} inputType={type} onChange={handleChange} placeholder={label.split(' ')[0]} drawnStrokes={drawnStrokes} setDrawnStrokes={setDrawnStrokes} startDrawing={startDrawing} draw={draw} stopDrawing={stopDrawing} triggerRedraw={redrawCounter}/></div></div>); };
+            const renderOfferInput = (key, labelKey, type = 'text') => { let ref, rawValue, strokesKey; const label = getStaticLabel(labelKey); if (key === 'einmalig' || key === 'monatlich1' || key === 'monatlich2' || key === 'smartphone') { ref = (key === 'einmalig' ? offerCost1Ref : key === 'monatlich1' ? offerCost2Ref : key === 'monatlich2' ? offerCost3Ref : offerCostSmartphoneRef); rawValue = offerData[`${key}Raw`] ?? ''; strokesKey = `cost_${key}`; } else if (key === 'agent') { ref = offerAgentRef; rawValue = getDisplayText('AgentName'); strokesKey = 'agent_name'; } else if (key === 'datum') { ref = offerDateRef; rawValue = getDisplayText('DateValue'); strokesKey = 'date_field'; } else if (key === 'gueltig') { ref = offerValidUntilRef; rawValue = getDisplayText('OfferValidUntil'); strokesKey = 'offer_valid_until'; } const isCostField = key.startsWith('monatlich') || key === 'einmalig' || key === 'smartphone'; const handleChange = (e) => { if (isCostField) { handleOfferCostChange(key, e.target.value); } else if (key === 'agent') { handleTextChange('AgentName', e.target.value); } else if (key === 'datum') { handleTextChange('DateValue', e.target.value); } else if (key === 'gueltig') { handleTextChange('OfferValidUntil', e.target.value); } }; const inputHeightClass = 'h-12'; const isDateField = type === 'date'; return (<div className="flex flex-col"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">{label}{isDateField && inputMode === 'pen' && (<span className="normal-case tracking-normal text-[10px] font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">Datumsauswahl</span>)}</label><div className={`relative ${inputHeightClass} ${isCostField ? 'bg-slate-50' : 'bg-white'} border border-slate-300 rounded-lg transition-all`}><SmallInputCanvas inputMode={inputMode} canvasRef={ref} inputKey={strokesKey} inputValue={rawValue} inputType={type} onChange={handleChange} placeholder={label.split(' ')[0]} drawnStrokes={drawnStrokes} setDrawnStrokes={setDrawnStrokes} startDrawing={startDrawing} draw={draw} stopDrawing={stopDrawing} triggerRedraw={redrawCounter} forceKeyboard={type === 'date'}/></div></div>); };
             
             const translateBatch = null; // Statische Labels lokal, getippte Texte via MyMemory (kostenlos)
 
