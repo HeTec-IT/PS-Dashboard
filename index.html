@@ -11067,13 +11067,13 @@ const handleOpenStats = () => { setShowPinLock(true); };
             // Zusätzlich DOM-Fallback, damit der allererste Klick nach frischer Eingabe sicher greift.
             const hasOfferValidity = useCallback(() => {
                 try {
-                    const textVal = String(getDisplayText('OfferValidUntil') || '').trim();
+                    const textVal = String((textData && textData.OfferValidUntil) || getDisplayText('OfferValidUntil') || '').trim();
                     const overrideVal = String((offerValidityOverrideRef.current || '')).trim();
                     const modalVal = String((document.getElementById('offer-validity-modal-input') || {}).value || '').trim();
                     const inkVal = !!(drawnStrokes && drawnStrokes.offer_valid_until && drawnStrokes.offer_valid_until.length);
                     return !!textVal || !!overrideVal || !!modalVal || inkVal;
                 } catch(e) { return false; }
-            }, [getDisplayText, drawnStrokes]);
+            }, [getDisplayText, drawnStrokes, textData]);
 
             const runOnlyWithOfferValidity = useCallback((nextAction) => {
                 if (hasOpenOfferNeedingValidity() && !hasOfferValidity()) {
@@ -12995,8 +12995,10 @@ const handleFinishOfferClick = () => {
                     }, 1000);
                 }
                 // Merken: dieses Feld wurde digital (Tastatur) genutzt -> im Druck/Share anzeigen
+                // 'OfferValidUntil' ist ein echtes Datumsfeld (forceKeyboard) und wird auch
+                // im Stift-Modus per Picker befüllt -> hier immer als digital werten.
                 try {
-                    if (inputMode === 'keyboard') {
+                    if (inputMode === 'keyboard' || key === 'OfferValidUntil') {
                         const map = {
                             'Kundenname': 'sit_Kundenname', 'Rufnummer': 'sit_Rufnummer', 'Anbieter': 'sit_Anbieter', 'Hardware': 'sit_Hardware',
                             'Nutzung': 'sit_Nutzung', 'Haushalt': 'sit_Haushalt', 'Weitere Produkte': 'sit_WeitereProdukte', 'WeitereProdukte': 'sit_WeitereProdukte',
@@ -14087,7 +14089,7 @@ const renderPenToolButtons = () => {
                 const rawKey = `${key}Raw`;
                 setOfferData(prev => ({ ...prev, [rawKey]: value, [key]: isNaN(val) || value.trim() === '' ? 0 : val }));
             };
-            const renderOfferInput = (key, labelKey, type = 'text') => { let ref, rawValue, strokesKey; const label = getStaticLabel(labelKey); if (key === 'einmalig' || key === 'monatlich1' || key === 'monatlich2' || key === 'smartphone') { ref = (key === 'einmalig' ? offerCost1Ref : key === 'monatlich1' ? offerCost2Ref : key === 'monatlich2' ? offerCost3Ref : offerCostSmartphoneRef); rawValue = offerData[`${key}Raw`] ?? ''; strokesKey = `cost_${key}`; } else if (key === 'agent') { ref = offerAgentRef; rawValue = getDisplayText('AgentName'); strokesKey = 'agent_name'; } else if (key === 'datum') { ref = offerDateRef; rawValue = getDisplayText('DateValue'); strokesKey = 'date_field'; } else if (key === 'gueltig') { ref = offerValidUntilRef; rawValue = getDisplayText('OfferValidUntil'); strokesKey = 'offer_valid_until'; } const isCostField = key.startsWith('monatlich') || key === 'einmalig' || key === 'smartphone'; const handleChange = (e) => { if (isCostField) { handleOfferCostChange(key, e.target.value); } else if (key === 'agent') { handleTextChange('AgentName', e.target.value); } else if (key === 'datum') { handleTextChange('DateValue', e.target.value); } else if (key === 'gueltig') { handleTextChange('OfferValidUntil', e.target.value); } }; const inputHeightClass = 'h-12'; const isDateField = type === 'date'; return (<div className="flex flex-col"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">{label}{isDateField && inputMode === 'pen' && (<span className="normal-case tracking-normal text-[10px] font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">Datumsauswahl</span>)}</label><div className={`relative ${inputHeightClass} ${isCostField ? 'bg-slate-50' : 'bg-white'} border border-slate-300 rounded-lg transition-all`}><SmallInputCanvas inputMode={inputMode} canvasRef={ref} inputKey={strokesKey} inputValue={rawValue} inputType={type} onChange={handleChange} placeholder={label.split(' ')[0]} drawnStrokes={drawnStrokes} setDrawnStrokes={setDrawnStrokes} startDrawing={startDrawing} draw={draw} stopDrawing={stopDrawing} triggerRedraw={redrawCounter} forceKeyboard={type === 'date'}/></div></div>); };
+            const renderOfferInput = (key, labelKey, type = 'text') => { let ref, rawValue, strokesKey; const label = getStaticLabel(labelKey); if (key === 'einmalig' || key === 'monatlich1' || key === 'monatlich2' || key === 'smartphone') { ref = (key === 'einmalig' ? offerCost1Ref : key === 'monatlich1' ? offerCost2Ref : key === 'monatlich2' ? offerCost3Ref : offerCostSmartphoneRef); rawValue = offerData[`${key}Raw`] ?? ''; strokesKey = `cost_${key}`; } else if (key === 'agent') { ref = offerAgentRef; rawValue = getDisplayText('AgentName'); strokesKey = 'agent_name'; } else if (key === 'datum') { ref = offerDateRef; rawValue = getDisplayText('DateValue'); strokesKey = 'date_field'; } else if (key === 'gueltig') { ref = offerValidUntilRef; rawValue = getDisplayText('OfferValidUntil'); strokesKey = 'offer_valid_until'; } const isCostField = key.startsWith('monatlich') || key === 'einmalig' || key === 'smartphone'; const handleChange = (e) => { if (isCostField) { handleOfferCostChange(key, e.target.value); } else if (key === 'agent') { handleTextChange('AgentName', e.target.value); } else if (key === 'datum') { handleTextChange('DateValue', e.target.value); } else if (key === 'gueltig') { try { offerValidityOverrideRef.current = String(e.target.value || '').trim(); } catch(err) {} try { digitalTouchedRef.current['offer_valid_until'] = true; } catch(err) {} handleTextChange('OfferValidUntil', e.target.value); } }; const inputHeightClass = 'h-12'; const isDateField = type === 'date'; return (<div className="flex flex-col"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">{label}{isDateField && inputMode === 'pen' && (<span className="normal-case tracking-normal text-[10px] font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">Datumsauswahl</span>)}</label><div className={`relative ${inputHeightClass} ${isCostField ? 'bg-slate-50' : 'bg-white'} border border-slate-300 rounded-lg transition-all`}><SmallInputCanvas inputMode={inputMode} canvasRef={ref} inputKey={strokesKey} inputValue={rawValue} inputType={type} onChange={handleChange} placeholder={label.split(' ')[0]} drawnStrokes={drawnStrokes} setDrawnStrokes={setDrawnStrokes} startDrawing={startDrawing} draw={draw} stopDrawing={stopDrawing} triggerRedraw={redrawCounter} forceKeyboard={type === 'date'}/></div></div>); };
             
             const translateBatch = null; // Statische Labels lokal, getippte Texte via MyMemory (kostenlos)
 
@@ -17680,6 +17682,8 @@ const resumeParkedArchive = async (entry, rufValue) => {
                         if (mode === 'cancel') {
                             try { setCustomerSignature(null); } catch(e) {}
                             try { setTextData(prev => ({ ...prev, OfferValidUntil: '' })); } catch(e) {}
+                            try { offerValidityOverrideRef.current = ''; } catch(e) {}
+                            try { digitalTouchedRef.current['offer_valid_until'] = false; } catch(e) {}
                             try { setDrawnStrokes(prev => ({ ...prev, offer_valid_until: [] })); } catch(e) {}
                         } else {
                             // Vorgang abgeschlossen (nicht abgebrochen) → jetzt archivieren
