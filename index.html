@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v53.0)
+         KEIN HTML-CACHE  (v53.1)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -109,7 +109,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v53.0)
+         VERSION + CACHE-BUSTING  (v53.1)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -117,7 +117,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '53.0';
+    window.APP_VERSION = '53.1';
     (function(){
         try {
             var KEY = 'pencil_app_version';
@@ -5226,9 +5226,14 @@ for (const [key, strokes] of Object.entries(drawnStrokes)) {
 </div><div className="flex justify-between items-center mt-4"><button onClick={clearCanvas} className="px-4 py-2 text-slate-500 font-medium hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-2" disabled={!hasSigned}><Icon d={ICONS.Trash} size={16}/> Löschen</button><div className="flex gap-2"><button onClick={() => onClose(true)} className="px-4 py-2 text-slate-500 font-medium hover:bg-slate-100 rounded-lg transition-colors">Abbrechen</button><button onClick={handleSave} className={`px-6 py-2 rounded-lg font-bold shadow-md transition-all flex items-center gap-2 ${hasSigned ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`} disabled={!hasSigned}>Übernehmen <Icon d={ICONS.CheckCircle} size={16}/></button></div></div></div></div>);
         };
 
-        const FinishTypeModal = ({ isOpen, onClose, onSelect, onShare, onPdfPrint }) => {
+        const FinishTypeModal = ({ isOpen, onClose, onSelect, onShare, onPdfPrint, finishMode }) => {
             if (!isOpen) return null;
             const [pdfBusy, setPdfBusy] = React.useState(false);
+            // v54.2: 'deal' = Abschluss gesetzt -> kein Angebot teilen.
+            // 'offer' = alles offen -> kein Vertragsabschluss/Parken.
+            const mode = finishMode || 'all';
+            const showDeal  = mode !== 'offer';
+            const showOffer = mode !== 'deal';
             const handlePdfPrint = async () => {
                 if (pdfBusy) return;
                 setPdfBusy(true);
@@ -5243,13 +5248,18 @@ for (const [key, strokes] of Object.entries(drawnStrokes)) {
                             <button onClick={onClose} style={{position:'absolute',top:'14px',right:'14px',width:'32px',height:'32px',borderRadius:'50%',background:'rgba(255,255,255,0.15)',border:'1px solid rgba(255,255,255,0.25)',color:'rgba(255,255,255,0.8)',cursor:'pointer',fontSize:'16px',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
                             <div style={{fontSize:'32px',marginBottom:'8px'}}>📋</div>
                             <h3 style={{fontSize:'22px',fontWeight:900,color:'#fff',margin:0,letterSpacing:'-0.02em'}}>Wie möchten Sie fortfahren?</h3>
-                            <p style={{fontSize:'13px',color:'rgba(255,255,255,0.65)',marginTop:'6px',marginBottom:0}}>Wählen Sie eine Option für das Angebot</p>
+                            <p style={{fontSize:'13px',color:'rgba(255,255,255,0.65)',marginTop:'6px',marginBottom:0}}>
+                                {mode === 'deal'  ? 'Angebot ist abgeschlossen – Vertrag abschließen oder parken'
+                               : mode === 'offer' ? 'Alle Angebote offen – Angebot mitgeben'
+                               : 'Wählen Sie eine Option für das Angebot'}
+                            </p>
                         </div>
 
                         {/* Cards */}
                         <div style={{padding:'24px',display:'flex',flexDirection:'column',gap:'12px'}}>
 
                             {/* Abschluss */}
+                            {showDeal && (
                             <button onClick={() => onSelect('deal')} style={{display:'flex',alignItems:'center',gap:'16px',padding:'16px 20px',borderRadius:'16px',border:'2px solid #d1fae5',background:'linear-gradient(135deg,#f0fdf4,#dcfce7)',cursor:'pointer',textAlign:'left',transition:'all 0.15s',width:'100%'}}
                                 onMouseEnter={e=>{e.currentTarget.style.borderColor='#10b981';e.currentTarget.style.transform='translateY(-1px)';}}
                                 onMouseLeave={e=>{e.currentTarget.style.borderColor='#d1fae5';e.currentTarget.style.transform='none';}}>
@@ -5260,8 +5270,10 @@ for (const [key, strokes] of Object.entries(drawnStrokes)) {
                                 </div>
                                 <div style={{marginLeft:'auto',fontSize:'18px',color:'#10b981'}}>→</div>
                             </button>
+                            )}
 
                             {/* v53p: Vertrag PARKEN – Unterschrift ja, Rufnummer spaeter */}
+                            {showDeal && (
                             <button onClick={() => onSelect('park')} style={{display:'flex',alignItems:'center',gap:'16px',padding:'16px 20px',borderRadius:'16px',border:'2px solid #fed7aa',background:'linear-gradient(135deg,#fff7ed,#ffedd5)',cursor:'pointer',textAlign:'left',transition:'all 0.15s',width:'100%'}}
                                 onMouseEnter={e=>{e.currentTarget.style.borderColor='#f97316';e.currentTarget.style.transform='translateY(-1px)';}}
                                 onMouseLeave={e=>{e.currentTarget.style.borderColor='#fed7aa';e.currentTarget.style.transform='none';}}>
@@ -5272,15 +5284,19 @@ for (const [key, strokes] of Object.entries(drawnStrokes)) {
                                 </div>
                                 <div style={{marginLeft:'auto',fontSize:'18px',color:'#f97316'}}>→</div>
                             </button>
+                            )}
 
-                            {/* Trennlinie */}
+                            {/* Trennlinie – nur wenn beide Gruppen sichtbar sind */}
+                            {showDeal && showOffer && (
                             <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                                 <div style={{flex:1,height:'1px',background:'#e2e8f0'}}/>
                                 <span style={{fontSize:'11px',fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.06em'}}>oder Angebot mitgeben</span>
                                 <div style={{flex:1,height:'1px',background:'#e2e8f0'}}/>
                             </div>
+                            )}
 
                             {/* PDF-Druck (pixelgenau) – EMPFOHLEN */}
+                            {showOffer && (
                             <button onClick={handlePdfPrint} disabled={pdfBusy} style={{display:'flex',alignItems:'center',gap:'16px',padding:'16px 20px',borderRadius:'16px',border:'2px solid #fde68a',background:pdfBusy?'#fef9c3':'linear-gradient(135deg,#fffbeb,#fef3c7)',cursor:pdfBusy?'wait':'pointer',textAlign:'left',transition:'all 0.15s',width:'100%',opacity:pdfBusy?0.7:1}}
                                 onMouseEnter={e=>{if(!pdfBusy){e.currentTarget.style.borderColor='#f59e0b';e.currentTarget.style.transform='translateY(-1px)';}}}
                                 onMouseLeave={e=>{e.currentTarget.style.borderColor='#fde68a';e.currentTarget.style.transform='none';}}>
@@ -5293,11 +5309,16 @@ for (const [key, strokes] of Object.entries(drawnStrokes)) {
                                 </div>
                                 <div style={{marginLeft:'auto',fontSize:'18px',color:'#f59e0b'}}>→</div>
                             </button>
+                            )}
 
                             {/* Hinweis: Archivierung läuft automatisch */}
                             <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',borderRadius:'12px',background:'#f1f5f9',border:'1px solid #e2e8f0'}}>
                                 <span style={{fontSize:'16px'}}>🗂️</span>
-                                <span style={{fontSize:'11px',color:'#64748b',lineHeight:1.4}}>Die Archivierung erfolgt automatisch – als <b>Angebot</b> beim Drucken, als <b>Abschluss</b> nach der Unterschrift.</span>
+                                <span style={{fontSize:'11px',color:'#64748b',lineHeight:1.4}}>
+                                    {mode === 'deal'  ? <>Mindestens ein Angebot steht auf <b>Abgeschlossen</b> – deshalb ist nur der Vertragsweg möglich. Zum Versenden eines Angebots den Status zurück auf <b>Offen</b> setzen.</>
+                                   : mode === 'offer' ? <>Alle Angebote stehen auf <b>Offen</b> – es wurde kein Vertrag geschlossen. Für einen Abschluss zuerst das entsprechende Angebot auf <b>Abgeschlossen</b> setzen.</>
+                                   : <>Die Archivierung erfolgt automatisch – als <b>Angebot</b> beim Drucken, als <b>Abschluss</b> nach der Unterschrift.</>}
+                                </span>
                             </div>
 
                             {/* Teilen – volle Breite */}
@@ -11952,6 +11973,19 @@ const isOfferAreaNonEmpty = React.useCallback((k) => {
                 return (s === 'open' || s === 'closed');
             });
 
+            // v54.2: Welche Optionen darf das Fertigstellen-Fenster anbieten?
+            // Sobald EIN befuelltes Angebot auf "Abgeschlossen" (gruen) steht, ist der
+            // Vertrag gemacht -> nur noch Abschluss/Parken, kein "Angebot teilen".
+            // Steht dagegen ALLES auf "Offen", gab es keinen Abschluss -> nur Angebot.
+            const finishMode = React.useMemo(() => {
+                const filled = ['offer1','offer2','offer3'].filter(k => isOfferAreaNonEmpty(k));
+                if (!filled.length) return 'all';
+                const st = filled.map(k => (canvasStatus && canvasStatus[k]) || 'neutral');
+                if (st.some(s => s === 'closed')) return 'deal';   // Abschluss vorhanden
+                if (st.every(s => s === 'open'))  return 'offer';  // alles offen
+                return 'all';
+            }, [canvasStatus, drawnStrokes, textData, canvasImages, redrawCounter]);
+
             // ===== Bundle -> Ziel-Canva (HTML bevorzugt, Fallback Bild) =====
             // Eigentlicher Import (ohne Abfrage) – ersetzt den Canvas-Inhalt
             const doImportBundle = React.useCallback((payload, key) => {
@@ -17753,7 +17787,7 @@ const resumeParkedArchive = async (entry, rufValue) => {
                             setTimeout(doReload, 300);
                         }
                     }} />
-                    <FinishTypeModal isOpen={showFinishTypeModal} onClose={() => setShowFinishTypeModal(false)} onSelect={handleFinishTypeSelection} onShare={handlePDFShare} onPdfPrint={handleRecommendedPdfPrint} />
+                    <FinishTypeModal isOpen={showFinishTypeModal} onClose={() => setShowFinishTypeModal(false)} onSelect={handleFinishTypeSelection} onShare={handlePDFShare} onPdfPrint={handleRecommendedPdfPrint} finishMode={finishMode} />
 
 
                     <OfferValidityModal
@@ -17972,7 +18006,7 @@ const resumeParkedArchive = async (entry, rufValue) => {
                         setTimeout(() => setShowReferralModal(true), 300);
                     }} />
 
-                    <header className="bg-white px-4 py-2 border-b border-slate-200 flex items-center gap-3 shrink-0 shadow-sm z-30 relative h-16 w-full"><div className="print-hide-toast" style={{display:"flex",alignItems:"center",gap:4,marginRight:4,cursor:"default"}} title="Autosave aktiv – alle 30s gesichert"><div style={{width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0}}/><span style={{fontSize:9,fontWeight:700,color:"#94a3b8",letterSpacing:"0.04em",userSelect:"none"}}>AUTO</span></div><span style={{fontSize:8,fontWeight:700,color:'#cbd5e1',letterSpacing:'0.05em',userSelect:'none',pointerEvents:'none',marginLeft:'-8px',marginRight:'2px'}}>v53.0</span>{LINK_EMPLOYEE && LINK_EMPLOYEE !== 'Diego da Silva' && <button onClick={() => setShowMyStats(true)} className="p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors" title="Meine Statistik – Qualität & Vorgänge ansehen"><Icon d={ICONS.Activity} size={18}/></button>}{LINK_EMPLOYEE === 'Diego da Silva' && <button onClick={handleOpenStats} className="p-2 text-slate-400 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors" title="📊 Statistik & Admin"><Icon d={ICONS.Lock} size={18}/></button>}<button onClick={toggleFullScreen} className="p-2 text-slate-400 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors" title="Vollbild umschalten (wie F11)">{isFullscreen ? <Icon d={ICONS.Minimize} size={18}/> : <Icon d={ICONS.Maximize} size={18}/>}</button><button onClick={() => setShowArchivPopup(true)} className="p-2 text-slate-400 hover:text-indigo-600 rounded-full hover:bg-indigo-50 transition-colors relative" title={parkedCount > 0 ? `Archiv öffnen – ${parkedCount} geparkte Angebote warten!` : "Archiv öffnen – gespeicherte Pencil Sellings abrufen"}><Icon d={ICONS.Folder} size={18}/>{parkedCount > 0 && <span style={{position:'absolute',top:'0px',right:'0px',minWidth:'15px',height:'15px',padding:'0 3px',borderRadius:'999px',background:'#ef4444',color:'#fff',fontSize:'9px',fontWeight:900,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1,boxShadow:'0 0 0 2px #fff',pointerEvents:'none'}}>{parkedCount > 9 ? '9+' : parkedCount}</span>}</button>
+                    <header className="bg-white px-4 py-2 border-b border-slate-200 flex items-center gap-3 shrink-0 shadow-sm z-30 relative h-16 w-full"><div className="print-hide-toast" style={{display:"flex",alignItems:"center",gap:4,marginRight:4,cursor:"default"}} title="Autosave aktiv – alle 30s gesichert"><div style={{width:7,height:7,borderRadius:"50%",background:"#22c55e",flexShrink:0}}/><span style={{fontSize:9,fontWeight:700,color:"#94a3b8",letterSpacing:"0.04em",userSelect:"none"}}>AUTO</span></div><span style={{fontSize:8,fontWeight:700,color:'#cbd5e1',letterSpacing:'0.05em',userSelect:'none',pointerEvents:'none',marginLeft:'-8px',marginRight:'2px'}}>v53.1</span>{LINK_EMPLOYEE && LINK_EMPLOYEE !== 'Diego da Silva' && <button onClick={() => setShowMyStats(true)} className="p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors" title="Meine Statistik – Qualität & Vorgänge ansehen"><Icon d={ICONS.Activity} size={18}/></button>}{LINK_EMPLOYEE === 'Diego da Silva' && <button onClick={handleOpenStats} className="p-2 text-slate-400 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors" title="📊 Statistik & Admin"><Icon d={ICONS.Lock} size={18}/></button>}<button onClick={toggleFullScreen} className="p-2 text-slate-400 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors" title="Vollbild umschalten (wie F11)">{isFullscreen ? <Icon d={ICONS.Minimize} size={18}/> : <Icon d={ICONS.Maximize} size={18}/>}</button><button onClick={() => setShowArchivPopup(true)} className="p-2 text-slate-400 hover:text-indigo-600 rounded-full hover:bg-indigo-50 transition-colors relative" title={parkedCount > 0 ? `Archiv öffnen – ${parkedCount} geparkte Angebote warten!` : "Archiv öffnen – gespeicherte Pencil Sellings abrufen"}><Icon d={ICONS.Folder} size={18}/>{parkedCount > 0 && <span style={{position:'absolute',top:'0px',right:'0px',minWidth:'15px',height:'15px',padding:'0 3px',borderRadius:'999px',background:'#ef4444',color:'#fff',fontSize:'9px',fontWeight:900,display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1,boxShadow:'0 0 0 2px #fff',pointerEvents:'none'}}>{parkedCount > 9 ? '9+' : parkedCount}</span>}</button>
                     
                     {false && <button onClick={() => setDarkMode(d => !d)} className="dark-toggle-btn" title="Hell/Dunkel umschalten">
                         <div className={`dark-toggle-track ${darkMode ? 'on' : ''}`}><div className="dark-toggle-thumb"></div></div>
