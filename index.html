@@ -26303,7 +26303,13 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     } catch (e) {
       _shop = '';
     }
-    return _shop ? `${ARCHIV_DATEI_PREFIX}${_shop}_${_typ}_${_datum}_${_kenn}.pdf` : `${ARCHIV_DATEI_PREFIX}${_typ}_${_datum}_${_kenn}.pdf`;
+    // v74 – VARIANTE B: Kennung (Rufnummer/Kundenname) direkt hinter das
+    //        PENCIL_-Präfix, damit sie in Outlook/SharePoint sofort sichtbar ist.
+    //        PENCIL_[Kennung]_[Shop]_[Typ]_[Datum].pdf
+    //          [0]     [1]     [2]   [3]    [4]
+    //        >>> FLOW ANPASSEN: Shop = split[2], Typ = split[3] (vorher [1]/[2]).
+    //        Das PENCIL_-Präfix bleibt am ANFANG – Trigger-Filter bleibt intakt.
+    return _shop ? `${ARCHIV_DATEI_PREFIX}${_kenn}_${_shop}_${_typ}_${_datum}.pdf` : `${ARCHIV_DATEI_PREFIX}${_kenn}_${_typ}_${_datum}.pdf`;
   };
   const ARCHIV_BETREFF_FELDER = 4; // NIEMALS ändern
   const buildArchivBetreff = (typ, datum, rufnummer, agent) => {
