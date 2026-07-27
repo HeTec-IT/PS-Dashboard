@@ -18387,11 +18387,13 @@ function App() {
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
+      // v74.1 FIX: NUR die 2.-Jahr-Strokes auf diesen Canvas (offerCost3Ref) zeichnen.
+      // Der frühere zweite Aufruf mit 'cost_smartphone' lief auf DENSELBEN Canvas und
+      // rief intern clearRect auf → er löschte die gerade gezeichneten 2.-Jahr-Striche
+      // wieder weg. Das Smartphone-Feld hat seinen EIGENEN Canvas (offerCostSmartphoneRef)
+      // und wird dort separat gezeichnet – hier hat es nichts verloren.
       try {
         redrawCanvas(canvas, drawnStrokes['cost_monatlich2'], 1, 'cost_monatlich2');
-      } catch (e) {}
-      try {
-        redrawCanvas(canvas, drawnStrokes['cost_smartphone'], 1, 'cost_smartphone');
       } catch (e) {}
     };
 
