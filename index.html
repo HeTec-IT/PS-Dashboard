@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v53.2)
+         KEIN HTML-CACHE  (v53.7)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -135,12 +135,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=53.2';
+        manifestLink.href = 'manifest.webmanifest?v=53.7';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=53.2').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=53.7').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -179,7 +179,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v53.2)
+         VERSION + CACHE-BUSTING  (v53.7)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -187,7 +187,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '53.2';
+    window.APP_VERSION = '53.7';
     (function(){
         try {
             var KEY = 'pencil_app_version';
@@ -228,6 +228,7 @@
     <!-- Firebase für Aktionsmappe-Verknüpfung -->
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <!-- pdf-lib: Unterschrift in bestehendes Angebots-PDF stempeln (v51.4 "PDF finalisieren") -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
     <!-- pdf.js: PDF-Vorschau vor der Unterschrift (v51.5) -->
@@ -4431,12 +4432,12 @@ const STATS_PASSWORD = (() => {
 
 // ── Firebase Stats Config (pencil-selling-stats) ──
 const STATS_FB_CONFIG = {
-  apiKey: "AIzaSyCgKvoW6mB_heUkQDpeZMFE-0CQSUFuN0g",
-  authDomain: "pencil-selling-stats-2f86e.firebaseapp.com",
-  projectId: "pencil-selling-stats-2f86e",
-  storageBucket: "pencil-selling-stats-2f86e.firebasestorage.app",
-  messagingSenderId: "166126857606",
-  appId: "1:166126857606:web:0b29898ae53a8c3aaa1007"
+  apiKey: "AIzaSyD0z1CX9vcdRQPtIo9pCjZ7Xs1h6dLl_8w",
+  authDomain: "o2-pencil-selling.firebaseapp.com",
+  projectId: "o2-pencil-selling",
+  storageBucket: "o2-pencil-selling.firebasestorage.app",
+  messagingSenderId: "347119579425",
+  appId: "1:347119579425:web:afbb0b60fe6a266627ce60"
 };
 
 // ── Firebase Stats DB singleton ──
@@ -4632,6 +4633,21 @@ const CURRENT_SHOP = SHOPS[CURRENT_SHOP_ID] || SHOPS.aalen;
 try {
   window.__PS_SHOP = CURRENT_SHOP_ID;
 } catch (e) {}
+
+// ═══════════════════════════════════════════════════════════════
+// NEU: erlaubte Shops für diesen Mitarbeiter (Heimatshop + vom
+// Administrator freigegebene weitere Standorte, Feld extraShopIds in
+// users/{uid} – wird beim Login in 'ps_allowed_shops' gespeichert).
+// Diego (Admin) sieht wie bisher immer alle Shops.
+// ═══════════════════════════════════════════════════════════════
+const PS_ALLOWED_SHOP_IDS = (() => {
+  if (LINK_EMPLOYEE === 'Diego da Silva') return Object.keys(SHOPS);
+  try {
+    const raw = JSON.parse(localStorage.getItem('ps_allowed_shops') || 'null');
+    if (Array.isArray(raw) && raw.length) return raw.filter(id => SHOPS[id]);
+  } catch (_) {}
+  return [CURRENT_SHOP_ID];
+})();
 // v53: Shop-KENNUNG (id), nicht der Ort.
 // Grund: In einer Stadt können mehrere Shops liegen – z.B.
 // "o2 Crailsheim" und "Telekom Crailsheim". Der Ort wäre bei beiden
@@ -18450,8 +18466,23 @@ function App() {
       });
     });
   })();
-  const PA_UPLOAD_URL = 'PASTE_POWER_AUTOMATE_FLOW_URL_HERE';
-  const PA_SHARED_KEY = ''; // optional: z.B. 'hetec-xyz-123'
+  const PA_UPLOAD_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/30/workflows/6e4980d3dcb74b89bec5b9d88d14e5eb/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kMXS4jANnAUzpeQ_UtVZvcKuE4OPaBIwj00elhHAZkg';
+  const PA_SHARED_KEY = 'hetec-ps-9f3k';
+  // ⚠️ v53.7: PA_UPLOAD_URL/PA_SHARED_KEY/uploadPdfToPowerAutomate() werden
+  // NICHT MEHR aufgerufen (weder automatisch noch manuell). Alle internen
+  // Archiv-Uploads laufen jetzt ausschliesslich ueber sendArchivCopyToNewFlow()
+  // und ARCHIVE_FLOW_URL – siehe dort. Bewusst nicht geloescht (falls spaeter
+  // nochmal gebraucht), aber tot: kein doppelter/paralleler Upload mehr moeglich.
+  // ══════════════════════════════════════════════════════════════════════
+  // ZENTRALER Archiv-Flow: EINE Ziel-URL fuer ALLE internen Archiv-Uploads –
+  // sowohl den automatischen Versand beim Kundenversand ("An Kunden senden")
+  // als auch den manuellen Archivierungsbutton (Notfalloesung). Dieser Flow
+  // speichert NICHTS direkt in SharePoint – er schickt die interne PDF nur
+  // per E-Mail an ARCHIV_EMAIL; der bestehende E-Mail-Flow sortiert von dort
+  // aus weiter. v53.7: dieselbe echte URL wie bisher PA_UPLOAD_URL.
+  // ══════════════════════════════════════════════════════════════════════
+  const ARCHIVE_FLOW_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/30/workflows/6e4980d3dcb74b89bec5b9d88d14e5eb/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kMXS4jANnAUzpeQ_UtVZvcKuE4OPaBIwj00elhHAZkg';
+  const ARCHIVE_FLOW_KEY = 'hetec-ps-9f3k';
   // Archiv-Postfach: hierhin schickt der Mitarbeiter das abgeschlossene Angebot (Power Automate sortiert es weiter)
   const ARCHIV_EMAIL = 'pencil-selling@hetec-gmbh.de';
   // SharePoint-Ordner zum direkten Abrufen der archivierten PDFs
@@ -21330,13 +21361,9 @@ function App() {
               setTimeout(() => setShowReferralModal(true), 400);
             }).catch(e => triggerToast('PDF-Fehler: ' + (e && e.message ? e.message : 'Unbekannt')));
           })) return;
-          backgroundAutoUpload({
-            type: 'abschluss',
-            triggerToast,
-            ensurePrintHeaders,
-            getAgent: getAgentDisplayNameForUpload,
-            getDsl: getDslFlagForUpload
-          });
+          // v76: Kein separater Upload mehr hier - laeuft zentral in
+          // dispatchArchiveMail() (ueber sendToArchive nach dem Referral-Schritt),
+          // damit pro Abschluss nur EINE Datei in SharePoint landet, nicht zwei.
           // Exakt dieselbe Logik wie der "PDF drucken / Empfohlen"-Button im FinishTypeModal
           (async () => {
             triggerToast('PDF wird erstellt… einen Moment.');
@@ -21348,6 +21375,8 @@ function App() {
               });
               window.__lastPdfBlob = blob;
               window.__lastPdfFile = pdfFile;
+              // NEU (v53.5): interne Archiv-PDF im Hintergrund an den neuen Flow senden
+              sendArchivCopyToNewFlow(blob, { type: 'abschluss' });
               // v57b: IMMER "Jetzt teilen"-Dialog. Direkt-Teilen scheitert auf
               // iPad/Android nach langer Erzeugung (Geste abgelaufen). Der Tap im
               // Dialog liefert die frische Geste → natives Menü öffnet garantiert.
@@ -25906,29 +25935,195 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       };
     }
     const pdfBase64 = await blobToBase64(blob);
+    // v76: Shop-KENNUNG mitschicken (z.B. 'aalen', 'schwaebisch-hall').
+    // Der Flow baut daraus den Ziel-Ordner - gleiche Logik wie das Mail-System.
+    let _shop = '';
+    try {
+      _shop = String(window.__PS_SHOP_ORT || '').trim();
+    } catch (e) {}
     const payload = {
       type,
       // 'abschluss' | 'angebot'
       dsl,
       // 'ja' | 'nein'
       agent,
+      shop: _shop,
+      // Shop-ID fuer die Ordner-Sortierung im Flow
       date: dateISO.slice(0, 10),
       ts: dateISO,
-      key: PA_SHARED_KEY || undefined,
+      key: PA_SHARED_KEY || '',
       pdfBase64
     };
-    const res = await fetch(PA_UPLOAD_URL, {
+    // v76: mode:'no-cors' + text/plain, weil der Power-Automate-HTTP-Trigger
+    // von Haus aus KEINE CORS-Header liefert. So bleibt es ein "simple request"
+    // (kein Preflight-OPTIONS) und laeuft trotzdem durch. Kehrseite: die Antwort
+    // ist "opaque" - Erfolg kann von hier aus nicht mehr geprueft werden. Bewusst
+    // in Kauf genommen: der Verkauf darf nie an diesem Schritt haengen bleiben.
+    await fetch(PA_UPLOAD_URL, {
       method: 'POST',
+      mode: 'no-cors',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'text/plain'
       },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error('Upload failed: ' + res.status);
     return {
       ok: true
     };
   };
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ZENTRALE FUNKTION (v53.7) für ALLE internen Archiv-Uploads:
+  //  - automatisch beim Kundenversand ("An Kunden senden")
+  //  - manuell über den bestehenden Archivierungsbutton (Notfalllösung)
+  // Beide Wege rufen GENAU diese Funktion auf und senden denselben
+  // vollständigen Payload an dieselbe ARCHIVE_FLOW_URL. Es gibt daneben
+  // keinen zweiten aktiven Upload-Weg mehr (uploadPdfToPowerAutomate()
+  // wird nirgends mehr aufgerufen).
+  // Nutzt IMMER die bestehende Dateinamen-/Betrefflogik (buildArchivDateiname/
+  // buildArchivBetreff) - keinen neuen vereinfachten Namen. Der Aufrufer kann
+  // bereits berechnete Werte (z.B. der manuelle Archivierungsbutton hat sie
+  // schon) per opts übergeben; ohne opts werden sie hier frisch erzeugt.
+  // opts (alle optional): { type, agent, dsl, archiveFileName, archiveSubject }
+  // Blockiert den Kundenversand NIE (kein await durch den Aufrufer nötig,
+  // alle Fehler werden hier abgefangen). Solange ARCHIVE_FLOW_URL der
+  // Platzhalter ist: leise überspringen.
+  // ══════════════════════════════════════════════════════════════════════
+  const sendArchivCopyToNewFlow = (blob, opts) => {
+    opts = opts || {};
+    return (async () => {
+      try {
+        if (!blob || !ARCHIVE_FLOW_URL || ARCHIVE_FLOW_URL.includes('PASTE_NEW_POWER_AUTOMATE_URL_HERE')) return;
+        const _typ = opts.type === 'abschluss' || opts.type === 'angebot' ? opts.type : customerSignature ? 'abschluss' : 'angebot';
+        let _ruf = '';
+        try {
+          _ruf = sharedMsisdnRef.current || (textData?.Rufnummer || '').replace(/[^0-9+]/g, '').trim();
+        } catch (e) {}
+        let _kunde = '';
+        try {
+          _kunde = cleanKundeName(sharedKundeRef.current || textData?.Kundenname || '');
+        } catch (e) {}
+        let _agent = opts.agent || '';
+        if (!_agent) {
+          try {
+            _agent = getAgentDisplayNameForUpload();
+            if (_agent === '–') _agent = '';
+          } catch (e) {}
+        }
+        let _dsl = opts.dsl || '';
+        if (_dsl !== 'ja' && _dsl !== 'nein') {
+          try {
+            _dsl = getDslFlagForUpload();
+          } catch (e) {
+            _dsl = 'nein';
+          }
+        }
+        if (_dsl !== 'ja' && _dsl !== 'nein') _dsl = 'nein';
+        let _shop = '';
+        try {
+          _shop = String(window.__PS_SHOP_ORT || '').trim();
+        } catch (e) {}
+        const _datum = new Date().toISOString().slice(0, 10);
+
+        // ⚠️ GESPERRT: archiveSubject/archiveFileName MÜSSEN im Payload landen.
+        // Quelle IMMER buildArchivBetreff()/buildArchivDateiname() - entweder
+        // vom Aufrufer schon berechnet (opts) oder hier frisch erzeugt. Eigene
+        // Fallbacks + Formatprüfung, damit niemals leer/null gesendet wird.
+        let archiveSubject = opts.archiveSubject ? String(opts.archiveSubject) : '';
+        if (!archiveSubject) {
+          try {
+            archiveSubject = String(buildArchivBetreff(_typ, _datum, _ruf, _agent) || '');
+          } catch (e) {}
+        }
+        if (!archiveSubject || !/^PENCIL\|/.test(archiveSubject)) {
+          archiveSubject = `PENCIL|${_typ}|${_datum}|${_agent || 'unbekannt'}`;
+        }
+        let archiveFileName = opts.archiveFileName ? String(opts.archiveFileName) : '';
+        if (!archiveFileName) {
+          try {
+            archiveFileName = String((_typ === 'abschluss' ? buildArchivDateiname('abschluss', _datum, _ruf) : buildArchivDateiname('angebot', _datum, _kunde)) || '');
+          } catch (e) {}
+        }
+        if (!archiveFileName) archiveFileName = `PENCIL_${_typ === 'abschluss' ? 'Abschluss' : 'Angebot'}_${_datum}.pdf`;
+        if (!/\.pdf$/i.test(archiveFileName)) archiveFileName += '.pdf'; // .pdf MUSS immer dran sein
+
+        const pdfBase64 = await blobToBase64(blob);
+
+        // Kontroll-Log: NUR Metadaten, NIE den vollen Base64-Inhalt.
+        try {
+          console.log({
+            archiveFileName,
+            archiveSubject,
+            pdfBase64Vorhanden: !!pdfBase64,
+            pdfBase64Laenge: pdfBase64?.length
+          });
+        } catch (e) {}
+
+        const _nowISO = new Date().toISOString();
+        const payload = {
+          key: ARCHIVE_FLOW_KEY,
+          type: _typ,
+          // 'abschluss' | 'angebot'
+          dsl: _dsl,
+          // 'ja' | 'nein'
+          agent: _agent,
+          shop: _shop,
+          date: _nowISO.slice(0, 10),
+          ts: _nowISO,
+          archiveFileName: archiveFileName,
+          archiveSubject: archiveSubject,
+          pdfBase64: pdfBase64
+        };
+        // no-cors + text/plain: Power-Automate-HTTP-Trigger liefert keine
+        // CORS-Header; Antwort bleibt "opaque" - bewusst in Kauf genommen,
+        // der Kundenversand/die Archivierung darf nie daran hängen bleiben.
+        await fetch(ARCHIVE_FLOW_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain'
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (e) {
+        console.warn('[ARCHIV-FLOW] Upload fehlgeschlagen:', e);
+      }
+    })();
+  };
+
+  // v77: TEST-HOOK für die Konsole - testet NUR die Power-Automate-Verbindung,
+  // ohne kompletten Verkaufsdurchlauf (Unterschrift etc.) zu brauchen.
+  // Nutzung in der Browser-Konsole (F12):  __testArchivUpload()
+  // oder mit Angebot statt Abschluss:      __testArchivUpload('angebot')
+  // v53.7: testet jetzt sendArchivCopyToNewFlow()/ARCHIVE_FLOW_URL (zentrale Funktion).
+  try {
+    window.__testArchivUpload = async function (typ) {
+      const _typ = typ === 'angebot' ? 'angebot' : 'abschluss';
+      const _blob = new Blob(['%PDF-1.4\n% Testdatei - Archiv-Verbindungstest\n'], {
+        type: 'application/pdf'
+      });
+      if (!ARCHIVE_FLOW_URL || ARCHIVE_FLOW_URL.includes('PASTE_NEW_POWER_AUTOMATE_URL_HERE')) {
+        console.warn('[TEST-UPLOAD] Übersprungen - ARCHIVE_FLOW_URL ist noch der Platzhalter.');
+        return {
+          skipped: true
+        };
+      }
+      try {
+        await sendArchivCopyToNewFlow(_blob, {
+          type: _typ,
+          agent: 'TestAgent',
+          dsl: 'nein'
+        });
+        console.log('[TEST-UPLOAD] Gesendet (Typ: ' + _typ + '). In Postfach & Flow-Verlauf prüfen.');
+        return {
+          skipped: false
+        };
+      } catch (e) {
+        console.error('[TEST-UPLOAD] Fehler:', e);
+        throw e;
+      }
+    };
+  } catch (e) {}
 
   // Hintergrund-Upload: erstellt Print-Look PDF und lädt es hoch. UI bleibt normal (Print-Dialog kann trotzdem kommen).
   const backgroundAutoUpload = async ({
@@ -25942,6 +26137,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       if (!window.html2pdf) return; // offline/CDN block -> skip
       // v60: Wenn KEIN Upload-Ziel konfiguriert ist (Platzhalter), gar nicht erst
       // rendern. Spart auf jedem Tablet unnötige Rechenlast bei jedem Abschluss.
+      // v53.7: prüft jetzt ARCHIVE_FLOW_URL (zentrale Funktion) statt PA_UPLOAD_URL.
       const _webhook = (() => {
         try {
           return localStorage.getItem('ps_pa_webhook') || '';
@@ -25949,21 +26145,17 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
           return '';
         }
       })();
-      const _hasTarget = typeof PA_UPLOAD_URL === 'string' && PA_UPLOAD_URL && !PA_UPLOAD_URL.includes('PASTE_POWER_AUTOMATE_FLOW_URL_HERE') || !!_webhook;
+      const _hasTarget = typeof ARCHIVE_FLOW_URL === 'string' && ARCHIVE_FLOW_URL && !ARCHIVE_FLOW_URL.includes('PASTE_NEW_POWER_AUTOMATE_URL_HERE') || !!_webhook;
       if (!_hasTarget) return; // Upload-Funktion bewusst inaktiv → nichts rendern, nichts senden
       const blob = await createPrintLookPdfBlob(triggerToast, ensurePrintHeaders, {
         addPageNumbers: true
       });
-      const dateISO = new Date().toISOString();
       const agent = getAgent();
       const dsl = getDsl();
-      await uploadPdfToPowerAutomate({
-        blob,
+      await sendArchivCopyToNewFlow(blob, {
         type,
-        dsl,
         agent,
-        dateISO,
-        triggerToast
+        dsl
       });
     } catch (e) {
       console.warn('Auto-Upload skipped:', e);
@@ -26368,6 +26560,38 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         betreff = buildArchivBetreff(fallbackType, new Date().toISOString().slice(0, 10), '', '');
       }
     } catch (e) {}
+
+    // v53.7: EIN Ziel fuer ALLE Archiv-Wege (automatisch + manueller
+    // Notfallbutton) - beide rufen jetzt sendArchivCopyToNewFlow() auf und
+    // senden an dieselbe ARCHIVE_FLOW_URL. uploadPdfToPowerAutomate()/
+    // PA_UPLOAD_URL werden hier NICHT MEHR aufgerufen (kein Parallelweg mehr).
+    // Bleibt ARCHIVE_FLOW_URL der Platzhalter, aendert sich am bisherigen
+    // (Mail-)Verhalten nichts - die Teilen-Kette darunter greift dann.
+    if (ARCHIVE_FLOW_URL && !ARCHIVE_FLOW_URL.includes('PASTE_NEW_POWER_AUTOMATE_URL_HERE')) {
+      const _felder = String(betreff || '').split('|');
+      const _typUpload = _felder[1] === 'abschluss' ? 'abschluss' : 'angebot';
+      const _agentUpload = _felder[3] || '';
+      let _dslUpload = 'nein';
+      try {
+        _dslUpload = getDslFlagForUpload();
+      } catch (e) {}
+      try {
+        await sendArchivCopyToNewFlow(blob, {
+          type: _typUpload,
+          agent: _agentUpload,
+          dsl: _dslUpload,
+          archiveFileName: dateiname,
+          archiveSubject: betreff
+        });
+        try {
+          triggerToast('✅ Archiviert.');
+        } catch (e) {}
+      } catch (e) {
+        console.warn('[ARCHIV-FLOW] Upload fehlgeschlagen:', e);
+      }
+      return; // fertig - kein Teilen-Fenster noetig
+    }
+
     const saveBlob = b => {
       const url = URL.createObjectURL(b);
       const a = document.createElement('a');
@@ -27145,6 +27369,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         } catch (e) {}
       }
       logQuoteToStatistics();
+      // NEU (v53.5): interne Archiv-PDF im Hintergrund an den neuen Flow senden
+      sendArchivCopyToNewFlow(blob);
     }
 
     // DIREKT teilen – die Geste (Klick bzw. „Weiter" der Namensabfrage) ist frisch
@@ -27239,6 +27465,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
 
       // ── Statistik sofort loggen (zählt unabhängig vom Teilen-Weg als "Angebot") ──
       logQuoteToStatistics();
+      // NEU (v53.5): interne Archiv-PDF im Hintergrund an den neuen Flow senden
+      sendArchivCopyToNewFlow(blob);
 
       // v53b: DIREKT teilen – der Blob lag schon bereit, die Geste
       // (Klick bzw. „Weiter" der Namensabfrage) ist noch frisch.
@@ -28404,7 +28632,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v53.2"), LINK_EMPLOYEE && LINK_EMPLOYEE !== 'Diego da Silva' && /*#__PURE__*/React.createElement("button", {
+  }, "v53.7"), LINK_EMPLOYEE && LINK_EMPLOYEE !== 'Diego da Silva' && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -28527,7 +28755,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       cursor: 'pointer',
       maxWidth: '190px'
     }
-  }, Object.keys(SHOPS).map(id => /*#__PURE__*/React.createElement("option", {
+  }, Object.keys(SHOPS).filter(id => PS_ALLOWED_SHOP_IDS.includes(id)).map(id => /*#__PURE__*/React.createElement("option", {
     key: id,
     value: id
   }, SHOPS[id].name)))), view === 'offer' && /*#__PURE__*/React.createElement("div", {
@@ -35330,7 +35558,530 @@ function __startPencilAppWhenReady(attempt = 0) {
     }
   }
 }
-__startPencilAppWhenReady();
+// ═══════════════════════════════════════════════════════════════
+// AUTH-GATE (Login / Selbstregistrierung / Freigabe) — NEU.
+// Ändert nichts an der bestehenden App. Ersetzt nur den direkten
+// Start-Aufruf unten durch diesen Gate-Check; danach läuft alles
+// exakt wie vorher (LINK_EMPLOYEE/CURRENT_SHOP_ID lesen wie bisher
+// aus localStorage 'ps_link_agent' / 'ps_shop').
+// Login/Registrierung/Freigabe laufen im EIGENEN Projekt
+// "o2-pencil-selling" — demselben Projekt wie die Statistik
+// oben (STATS_FB_CONFIG). Konsolidiert von "beta-pencil-selling" (altes,
+// separates Konto) hierher, damit alles auf einem Account liegt - genau
+// wie bei der Telekom-Edition. Keine Einladungen mehr nötig: Mitarbeiter
+// registrieren sich selbst, Freigabe läuft über das Administrator-
+// Dashboard (Feld 'active' in users/{uid}).
+// ═══════════════════════════════════════════════════════════════
+const BETA_FB_CONFIG = STATS_FB_CONFIG;
+const PS_ADMIN_EMAIL = 'd.dasilva@hetec-gmbh.de';
+
+function __psGetBetaApp() {
+  var existing = window.firebase && window.firebase.apps && window.firebase.apps.find(function (a) { return a.name === 'stats'; });
+  return existing ? existing : window.firebase.initializeApp(BETA_FB_CONFIG, 'stats');
+}
+
+function __psGetBetaDb() {
+  if (window.__betaDb) return window.__betaDb;
+  window.__betaDb = window.firebase.firestore(__psGetBetaApp());
+  return window.__betaDb;
+}
+
+function __psGetAuth() {
+  try {
+    if (window.__betaAuth) return window.__betaAuth;
+    window.__betaAuth = window.firebase.auth(__psGetBetaApp());
+    return window.__betaAuth;
+  } catch (e) {
+    console.error('Auth-Init fehlgeschlagen:', e);
+    return null;
+  }
+}
+
+function __psGateRender(html) {
+  var el = document.getElementById('root');
+  if (el) el.innerHTML = html;
+}
+
+function __psShowError(msg) {
+  var box = document.getElementById('ps-gate-msg');
+  if (box) {
+    box.textContent = msg;
+    box.classList.remove('hidden');
+  } else {
+    alert(msg);
+  }
+}
+
+function __psIsAdminEmail(email) {
+  return String(email || '').toLowerCase() === PS_ADMIN_EMAIL;
+}
+
+function __psShopOptionsHtml() {
+  var html = '';
+  Object.keys(SHOPS).forEach(function (id) {
+    html += '<option value="' + id + '">' + SHOPS[id].name + '</option>';
+  });
+  return html;
+}
+
+function __psRenderAuth(mode, prefill) {
+  prefill = prefill || {};
+  var isRegister = mode === 'register';
+  function tabBtn(m, label) {
+    var active = m === mode;
+    return '<button data-mode="' + m + '" class="ps-tab flex-1 py-2 text-sm font-semibold rounded-lg ' +
+      (active ? 'bg-blue-600 text-white' : 'text-slate-500') + '">' + label + '</button>';
+  }
+  var formHtml = isRegister ? (
+    '<select id="ps-gate-anrede" class="w-full mb-2 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">' +
+      '<option value="">Anrede wählen…</option>' +
+      '<option value="Herr"' + (prefill.anrede === 'Herr' ? ' selected' : '') + '>Herr</option>' +
+      '<option value="Frau"' + (prefill.anrede === 'Frau' ? ' selected' : '') + '>Frau</option>' +
+      '<option value="Divers"' + (prefill.anrede === 'Divers' ? ' selected' : '') + '>Divers</option>' +
+    '</select>' +
+    '<input id="ps-gate-vorname" type="text" placeholder="Vorname (optional)" value="' + (prefill.vorname || '') + '" class="w-full mb-2 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+    '<input id="ps-gate-nachname" type="text" placeholder="Nachname" value="' + (prefill.nachname || '') + '" class="w-full mb-2 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+    '<input id="ps-gate-email" type="email" placeholder="E-Mail (@hetec-gmbh.de)" value="' + (prefill.email || '') + '" class="w-full mb-2 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+    '<input id="ps-gate-pw" type="password" placeholder="Passwort" class="w-full mb-2 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+    '<select id="ps-gate-shop" class="w-full mb-4 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">' + __psShopOptionsHtml() + '</select>' +
+    '<button id="ps-gate-submit" class="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg text-sm">Konto erstellen</button>'
+  ) : (
+    '<input id="ps-gate-email" type="email" placeholder="E-Mail" value="' + (prefill.email || '') + '" class="w-full mb-3 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+    '<input id="ps-gate-pw" type="password" placeholder="Passwort" class="w-full mb-3 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+    '<label class="flex items-center gap-2 mb-4 text-sm text-slate-600 cursor-pointer select-none">' +
+      '<input id="ps-gate-remember" type="checkbox" checked class="w-4 h-4" /> Zugangsdaten dauerhaft merken' +
+    '</label>' +
+    '<button id="ps-gate-submit" class="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg text-sm mb-2">Anmelden</button>' +
+    '<button id="ps-gate-reset-btn" class="w-full text-blue-600 text-xs py-1">Passwort vergessen?</button>'
+  );
+
+  __psGateRender(
+    '<div class="min-h-screen flex items-center justify-center bg-slate-100 p-4">' +
+      '<div class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-6">' +
+        '<h1 class="text-xl font-bold text-slate-800 mb-4">Pencil Selling</h1>' +
+        '<div class="flex gap-1 bg-slate-100 rounded-lg p-1 mb-4">' + tabBtn('login', 'Anmelden') + tabBtn('register', 'Registrieren') + '</div>' +
+        '<div id="ps-gate-msg" class="hidden text-sm text-red-600 bg-red-50 rounded-lg p-2 mb-3"></div>' +
+        formHtml +
+      '</div>' +
+    '</div>'
+  );
+
+  Array.prototype.forEach.call(document.querySelectorAll('.ps-tab'), function (btn) {
+    btn.onclick = function () {
+      var vals = {
+        anrede: (document.getElementById('ps-gate-anrede') || {}).value,
+        vorname: (document.getElementById('ps-gate-vorname') || {}).value,
+        nachname: (document.getElementById('ps-gate-nachname') || {}).value,
+        email: (document.getElementById('ps-gate-email') || {}).value
+      };
+      __psRenderAuth(btn.getAttribute('data-mode'), vals);
+    };
+  });
+
+  if (isRegister) {
+    document.getElementById('ps-gate-submit').onclick = function () {
+      var anrede = document.getElementById('ps-gate-anrede').value;
+      var vorname = document.getElementById('ps-gate-vorname').value.trim();
+      var nachname = document.getElementById('ps-gate-nachname').value.trim();
+      var email = document.getElementById('ps-gate-email').value.trim().toLowerCase();
+      var pw = document.getElementById('ps-gate-pw').value;
+      var shopId = document.getElementById('ps-gate-shop').value;
+      if (!anrede || !nachname || !email || !pw) { __psShowError('Bitte Anrede, Nachname, E-Mail und Passwort ausfüllen.'); return; }
+      if (!/@hetec-gmbh\.de$/.test(email)) { __psShowError('Nur E-Mail-Adressen mit @hetec-gmbh.de erlaubt.'); return; }
+      if (pw.length < 6) { __psShowError('Passwort braucht mind. 6 Zeichen.'); return; }
+      var displayName = vorname ? (vorname + ' ' + nachname).trim() : nachname;
+      var auth = __psGetAuth();
+      auth.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL).then(function () {
+        return auth.createUserWithEmailAndPassword(email, pw);
+      }).then(function (cred) {
+        return cred.user.sendEmailVerification().then(function () {
+          return __psGetBetaDb().collection('users').doc(cred.user.uid).set({
+            email: email,
+            anrede: anrede,
+            vorname: vorname,
+            nachname: nachname,
+            name: displayName,
+            shopId: shopId,
+            shop: (SHOPS[shopId] && SHOPS[shopId].name) || '',
+            role: 'verkaeufer',
+            status: 'pending',
+            active: false,
+            isTestUser: false,
+            createdAt: Date.now()
+          });
+        });
+      }).catch(function (e) {
+        __psShowError('Fehler: ' + (e && e.message || e));
+      });
+    };
+  } else {
+    document.getElementById('ps-gate-submit').onclick = function () {
+      var email = document.getElementById('ps-gate-email').value.trim().toLowerCase();
+      var pw = document.getElementById('ps-gate-pw').value;
+      var remember = document.getElementById('ps-gate-remember').checked;
+      if (!email || !pw) { __psShowError('Bitte E-Mail und Passwort eingeben.'); return; }
+      var auth = __psGetAuth();
+      var persistence = remember ? window.firebase.auth.Auth.Persistence.LOCAL : window.firebase.auth.Auth.Persistence.SESSION;
+      auth.setPersistence(persistence).then(function () {
+        return auth.signInWithEmailAndPassword(email, pw);
+      }).catch(function (e) {
+        __psShowError('Anmeldung fehlgeschlagen: ' + (e && e.message || e));
+      });
+    };
+    document.getElementById('ps-gate-reset-btn').onclick = function () {
+      var email = document.getElementById('ps-gate-email').value.trim();
+      if (!email) { __psShowError('Bitte zuerst E-Mail eingeben.'); return; }
+      __psGetAuth().sendPasswordResetEmail(email).then(function () {
+        __psShowError('E-Mail zum Zurücksetzen wurde verschickt.');
+      }).catch(function (e) {
+        __psShowError('Fehler: ' + (e && e.message || e));
+      });
+    };
+  }
+}
+
+function __psRenderWait(kind) {
+  // SICHERHEITSFIX: 'blocked' entfällt hier - Zugriffsverweigerung (gesperrt/
+  // abgelehnt/deaktiviert/Profil fehlt) meldet jetzt sofort ab und zeigt
+  // Anmelden/Registrieren (siehe __psDenyAccess), statt auf einen eigenen
+  // Wartebildschirm mit manuellem Abmelden-Button zu setzen.
+  var title = kind === 'verify' ? 'E-Mail bestätigen' : 'Warte auf Freigabe';
+  var text = kind === 'verify'
+    ? 'Wir haben dir eine E-Mail geschickt. Bitte bestätige deine Adresse, dann geht es automatisch weiter.'
+    : 'Deine Registrierung war erfolgreich. Dein Zugang muss noch durch einen Administrator freigegeben werden.';
+  __psGateRender(
+    '<div class="min-h-screen flex items-center justify-center bg-slate-100 p-4">' +
+      '<div class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-6 text-center">' +
+        '<h1 class="text-xl font-bold text-slate-800 mb-2">' + title + '</h1>' +
+        '<p class="text-sm text-slate-500 mb-5">' + text + '</p>' +
+        (kind === 'verify' ? '<button id="ps-gate-resend" class="w-full text-blue-600 text-xs py-2 mb-2">E-Mail erneut senden</button>' : '') +
+        '<button id="ps-gate-logout" class="w-full text-slate-400 text-xs py-1">Abmelden</button>' +
+      '</div>' +
+    '</div>'
+  );
+  if (kind === 'verify') {
+    document.getElementById('ps-gate-resend').onclick = function () {
+      var auth = __psGetAuth();
+      if (auth.currentUser) { auth.currentUser.sendEmailVerification().catch(function () {}); }
+    };
+  }
+  document.getElementById('ps-gate-logout').onclick = function () {
+    __psGetAuth().signOut().then(function () { location.reload(); });
+  };
+}
+
+// SICHERHEITSFIX: zentrale Funktion für JEDEN Fall, in dem der Zugriff
+// verweigert werden muss (Profil fehlt, gesperrt/abgelehnt/deaktiviert,
+// unbekannter Status, Live-Sperrung während der Nutzung). Zeigt SOFORT
+// Anmelden/Registrieren mit einer verständlichen Meldung (nicht erst nach
+// einem Reload) und meldet die Firebase-Sitzung zuverlässig ab.
+// reloadAfter=true nur dann, wenn zuvor schon die komplette Pencil-Selling-
+// Oberfläche lief (appStarted) - dort sorgt ein Reload nach dem Abmelden für
+// einen wirklich sauberen Teardown der laufenden App.
+function __psDenyAccess(message, reloadAfter) {
+  __psRenderAuth('login');
+  try { __psShowError(message); } catch (e) {}
+  try {
+    var p = __psGetAuth().signOut().catch(function () {});
+    if (reloadAfter) { p.then(function () { location.reload(); }); }
+  } catch (e) {}
+}
+
+function __psAddFloatingLogout() {
+  // Fügt ein reines Icon (kein Text, kein Overlay) als echtes Kind-Element
+  // in den bestehenden <header> von Pencil Selling ein – rechtsbündig, wie
+  // die anderen Icons dort. Ein MutationObserver setzt es automatisch neu,
+  // falls React den Header neu rendert und es dabei entfernen würde.
+  function ensureBtn() {
+    var header = document.querySelector('header');
+    if (!header) return;
+    var btn = document.getElementById('ps-logout-icon');
+    if (btn && header.contains(btn)) return;
+    btn = document.createElement('button');
+    btn.id = 'ps-logout-icon';
+    btn.type = 'button';
+    btn.title = 'Abmelden';
+    btn.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>';
+    btn.style.cssText = 'margin-left:auto;flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:#94a3b8;border-radius:8px;cursor:pointer;padding:0;';
+    btn.onmouseenter = function () { btn.style.background = '#fef2f2'; btn.style.color = '#dc2626'; };
+    btn.onmouseleave = function () { btn.style.background = 'transparent'; btn.style.color = '#94a3b8'; };
+    btn.onclick = function () {
+      if (!window.confirm('Wirklich abmelden?')) return;
+      __psGetAuth().signOut().then(function () { location.reload(); });
+    };
+    header.appendChild(btn);
+  }
+
+  var tries = 0;
+  var iv = setInterval(function () {
+    tries++;
+    var header = document.querySelector('header');
+    if (header) {
+      clearInterval(iv);
+      ensureBtn();
+      try {
+        new MutationObserver(function () { ensureBtn(); }).observe(header, { childList: true });
+      } catch (e) {}
+    } else if (tries > 100) {
+      clearInterval(iv);
+    }
+  }, 100);
+}
+
+function __PS_startAuthGate(startAppFn) {
+  var auth = __psGetAuth();
+  if (!auth) { startAppFn(); return; }
+  var appStarted = false;
+
+  function startOnce(profile) {
+    if (appStarted) return;
+    appStarted = true;
+    var _home = (profile && profile.shopId) || 'aalen';
+    var _extra = (profile && Array.isArray(profile.extraShopIds)) ? profile.extraShopIds : [];
+    var _allowed = [_home].concat(_extra.filter(function (id) { return id !== _home; }));
+    var _priorShop = null;
+    try { _priorShop = localStorage.getItem('ps_shop'); } catch (e) {}
+    // BUGFIX: 'ps_shop' NICHT mehr blind auf den Heimatshop zurücksetzen –
+    // das hat einen manuell (per erlaubtem Shop-Wechsel) gewählten Shop bei
+    // jedem Login wieder überschrieben. Der zuletzt gewählte Shop bleibt
+    // jetzt erhalten, SOFERN er noch erlaubt ist (Heimatshop oder vom Admin
+    // freigegebener Zusatzstandort in extraShopIds). Wurde die Freigabe
+    // zwischenzeitlich entzogen, fällt es automatisch zurück auf den
+    // Heimatshop.
+    var _effectiveShop = (_priorShop && _allowed.indexOf(_priorShop) !== -1) ? _priorShop : _home;
+    try {
+      localStorage.setItem('ps_link_agent', (profile && profile.name) || '');
+      localStorage.setItem('ps_shop', _effectiveShop);
+      // Shop-Wechsel-Berechtigung aus dem Firestore-Profil übernehmen. Ohne
+      // Freigabe bleibt ein Mitarbeiter auf seinem Heimatshop (shopId)
+      // stationär. Erst ein Eintrag in extraShopIds (vom Administrator im
+      // Dashboard gesetzt, "Weitere Standorte verwalten") gibt zusätzliche
+      // Standorte frei – exakt dieselbe bereits im Admin-Dashboard vorhandene
+      // Logik, hier nur konsumiert.
+      localStorage.setItem('ps_allowed_shops', JSON.stringify(_allowed));
+      localStorage.setItem('ps_shopwechsel', _extra.length > 0 ? '1' : '0');
+    } catch (e) {}
+    // CURRENT_SHOP_ID (und PS_ALLOWED_SHOP_IDS) sind oben im Skript als
+    // const berechnet, BEVOR das Firestore-Profil geladen ist – also aus
+    // dem 'ps_shop', der VOR diesem Aufruf in localStorage stand. Nur wenn
+    // der jetzt ermittelte, tatsächlich gültige Shop davon abweicht (z.B.
+    // beim allerersten Start, oder wenn eine Freigabe entzogen wurde), hilft
+    // ein einmaliger, selbstbeendender Reload – genau wie beim manuellen
+    // "Shop wechseln" – damit CURRENT_SHOP_ID neu und korrekt berechnet wird.
+    if (_effectiveShop !== CURRENT_SHOP_ID) {
+      try {
+        var u = new URL(window.location.href);
+        u.searchParams.delete('shop');
+        u.searchParams.delete('filiale');
+        window.__psIntentionalReload = true;
+        window.location.replace(u.toString());
+        return;
+      } catch (e) {}
+    }
+    __psAddFloatingLogout();
+    startAppFn();
+  }
+
+  function showFatal(err) {
+    __psGateRender(
+      '<div class="min-h-screen flex items-center justify-center bg-slate-100 p-4 text-center">' +
+        '<div class="max-w-sm">' +
+          '<h1 class="text-lg font-bold text-slate-800 mb-2">Verbindung fehlgeschlagen</h1>' +
+          '<p class="text-sm text-slate-500 mb-4">' + ((err && err.message) ? err.message : 'Unbekannter Fehler. Bitte erneut versuchen.') + '</p>' +
+          '<button id="ps-gate-retry" class="bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg mr-2">Erneut versuchen</button>' +
+          '<button id="ps-gate-logout2" class="text-slate-400 text-sm underline">Abmelden</button>' +
+        '</div>' +
+      '</div>'
+    );
+    var r = document.getElementById('ps-gate-retry');
+    if (r) r.onclick = function () { location.reload(); };
+    var l = document.getElementById('ps-gate-logout2');
+    if (l) l.onclick = function () { auth.signOut().then(function () { location.reload(); }); };
+  }
+
+  // SICHERHEITSFIX: ersetzt das bisherige renderCompleteProfile(), das bei
+  // JEDEM fehlenden Profil (auch bei gesperrten/gelöschten Konten) ein neues
+  // "pending"-Profil per set() angelegt und damit die Sperre unterlaufen hat.
+  // Diese Funktion wird NUR noch für ein bereits freigegebenes Profil
+  // (active===true && status==='approved') mit fehlendem Namen aufgerufen
+  // und aktualisiert AUSSCHLIESSLICH vorname/nachname/name per update() -
+  // exakt die Felder, die die Firestore-Regeln für Selbst-Updates erlauben.
+  // Kein shopId, keine Rolle, kein status/active, kein neues Profil.
+  // Hinweis: 'Anrede' fehlt hier bewusst, weil die (laut Auftrag
+  // unveränderten) Firestore-Regeln für Selbst-Updates nur
+  // ['name','vorname','nachname'] zulassen - Diego kann 'anrede' bei Bedarf
+  // selbst zu dieser Liste in den Regeln hinzufügen.
+  function renderCompleteProfileNameOnly(user) {
+    __psGateRender(
+      '<div class="min-h-screen flex items-center justify-center bg-slate-100 p-4">' +
+        '<div class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-6">' +
+          '<h1 class="text-xl font-bold text-slate-800 mb-1">Profil vervollständigen</h1>' +
+          '<p class="text-sm text-slate-500 mb-4">Einmalig – dein Name fehlt noch in deinem (bereits freigegebenen) Konto.</p>' +
+          '<div id="ps-gate-msg" class="hidden text-sm text-red-600 bg-red-50 rounded-lg p-2 mb-3"></div>' +
+          '<input id="ps-gate-vorname" type="text" placeholder="Vorname (optional)" class="w-full mb-2 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+          '<input id="ps-gate-nachname" type="text" placeholder="Nachname" class="w-full mb-4 px-3 py-2 border border-slate-300 rounded-lg text-sm" />' +
+          '<button id="ps-gate-submit" class="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg text-sm">Speichern</button>' +
+        '</div>' +
+      '</div>'
+    );
+    document.getElementById('ps-gate-submit').onclick = function () {
+      var vorname = document.getElementById('ps-gate-vorname').value.trim();
+      var nachname = document.getElementById('ps-gate-nachname').value.trim();
+      if (!nachname) { __psShowError('Bitte mindestens den Nachnamen ausfüllen.'); return; }
+      var displayName = vorname ? (vorname + ' ' + nachname).trim() : nachname;
+      __psGetBetaDb().collection('users').doc(user.uid).update({
+        vorname: vorname,
+        nachname: nachname,
+        name: displayName
+      }).catch(function (e) {
+        __psShowError('Fehler: ' + (e && e.message || e));
+      });
+      // Kein weiterer Schritt nötig: der onSnapshot-Listener unten reagiert
+      // automatisch auf das aktualisierte Profil.
+    };
+  }
+
+  auth.onAuthStateChanged(function (user) {
+    if (!user) { __psRenderAuth('login'); return; }
+    // SICHERHEITSFIX: Sicherheitsreihenfolge - Domain zuerst prüfen, vor
+    // jeder weiteren Prüfung/jedem Firestore-Zugriff.
+    if (!/@hetec-gmbh\.de$/i.test(user.email || '')) {
+      __psDenyAccess('Dieses Konto ist für Pencil Selling nicht zugelassen (nur @hetec-gmbh.de).', false);
+      return;
+    }
+
+    // Token neu holen + Profil-Listener starten. Ausgelagert, damit sowohl
+    // der normale Weg (erst E-Mail bestätigen) als auch der Admin-Vorrang-
+    // Weg unten (Profil ist schon freigegeben) hierher führen können.
+    function proceedToProfileGate() {
+      user.getIdToken(true).then(function () {
+        var isBootstrapAdmin = __psIsAdminEmail(user.email);
+        var autoActivateAttempted = false;
+        var unsubscribeUserDoc = __psGetBetaDb().collection('users').doc(user.uid).onSnapshot(function (snap) {
+          var d = snap.data();
+          if (!d) {
+            // BUGFIX: ein leerer Snapshot direkt aus dem lokalen Cache
+            // (z.B. kurz nach einem Token-Refresh oder Sign-out/Reload)
+            // bedeutet NICHT zuverlässig, dass das Profil wirklich fehlt -
+            // nur, dass gerade nichts Gültiges zwischengespeichert ist.
+            // Erst auf eine vom Server bestätigte Antwort warten.
+            if (snap.metadata && snap.metadata.fromCache) return;
+            if (isBootstrapAdmin) {
+              // Admin-Bootstrapping: falls der Administrator die Haupt-App
+              // vor dem Admin-Dashboard öffnet, existiert sein eigenes
+              // Profil evtl. noch nicht - identisch zu ensureAdminProfile()
+              // im Dashboard automatisch anlegen. Betrifft ausschließlich
+              // d.dasilva@hetec-gmbh.de; für alle anderen gilt unten die
+              // Zugriffsverweigerung.
+              __psGetBetaDb().collection('users').doc(user.uid).set({
+                email: user.email,
+                name: 'Diego da Silva',
+                vorname: 'Diego',
+                nachname: 'da Silva',
+                role: 'admin',
+                active: true,
+                status: 'approved',
+                isTestUser: false,
+                shopId: '',
+                shop: 'Verwaltung / Alle Shops',
+                createdAt: Date.now()
+              }).catch(function (e) { console.error('Admin-Profil konnte nicht angelegt werden:', e); });
+              return; // onSnapshot feuert gleich erneut mit dem frisch angelegten Profil
+            }
+            // SICHERHEITSFIX: Fehlendes Profil darf niemals neu angelegt
+            // werden - weder durch "Profil vervollständigen" noch sonst
+            // irgendeine automatische Profilerstellung. Immer: Zugang
+            // verweigern und abmelden, niemals ein neues Profil erzeugen.
+            if (unsubscribeUserDoc) { try { unsubscribeUserDoc(); } catch (e) {} }
+            __psDenyAccess('Dein Zugang ist nicht mehr vorhanden oder wurde gesperrt. Bitte wende dich an einen Administrator.', appStarted);
+            return;
+          }
+          // SICHERHEITSFIX: strenge Positivprüfung statt einer laxen
+          // "!== false"-Prüfung. Nur bei GENAU diesen beiden Werten wird
+          // Zugriff gewährt; jeder andere/unbekannte/fehlende Status wird
+          // als "kein Zugriff" behandelt.
+          var darfZugreifen = d.active === true && d.status === 'approved';
+          if (darfZugreifen || isBootstrapAdmin) {
+            var fehltName = !((d.nachname && String(d.nachname).trim()) || (d.name && String(d.name).trim()));
+            if (fehltName && !isBootstrapAdmin) {
+              renderCompleteProfileNameOnly(user);
+            } else {
+              startOnce(d);
+            }
+          } else if (appStarted) {
+            // Admin hat das Konto WÄHREND der Nutzung gesperrt/deaktiviert
+            // (oder das Profil gelöscht). Sofort abmelden und zur
+            // Anmelden/Registrieren-Seite - nicht erst nach einem
+            // Reload-Umweg (siehe Cache-Hinweis oben).
+            if (unsubscribeUserDoc) { try { unsubscribeUserDoc(); } catch (e) {} }
+            __psDenyAccess('Dein Zugang wurde soeben gesperrt. Bitte wende dich an einen Administrator.', true);
+          } else if (d.status === 'pending' && !autoActivateAttempted) {
+            // Auf Wunsch (nach Rücksprache) wieder aktiviert: automatische
+            // Freischaltung nach E-Mail-Bestätigung, damit kein Admin-Klick
+            // nötig ist. Sicher, weil NUR für status:'pending' - ein einmal
+            // abgelehntes/gesperrtes/gelöschtes Konto hat einen ANDEREN
+            // Status und landet weiterhin im else-Zweig (sofort abmelden).
+            // Das eigentliche Loch (fehlendes Profil selbst neu anlegen)
+            // bleibt geschlossen: renderCompleteProfileNameOnly() legt nie
+            // ein neues Profil an. Setzt EXAKT die zwei Firestore-Felder,
+            // die die (unveränderten) Regeln für diese Selbst-Transition
+            // erlauben (status:'pending'/active:false -> 'approved'/true,
+            // nur diese beiden Felder). Schlägt der Schreibvorgang fehl
+            // (z.B. weil die Regeln diese Klausel nicht mehr enthalten),
+            // wird sauber auf die normale Warteseite zurückgefallen.
+            autoActivateAttempted = true;
+            __psGetBetaDb().collection('users').doc(user.uid)
+              .update({ active: true, status: 'approved' })
+              .catch(function (e) {
+                autoActivateAttempted = false;
+                console.error('Automatische Freischaltung fehlgeschlagen (evtl. fehlt die Firestore-Regel dafür):', e);
+                __psRenderWait('approval');
+              });
+          } else {
+            // rejected / gesperrt / blocked / deleted / unbekannter Status /
+            // active:false mit status:'approved' (z.B. Deaktivierung) -
+            // niemals Zugriff erlauben, sofort abmelden.
+            if (unsubscribeUserDoc) { try { unsubscribeUserDoc(); } catch (e) {} }
+            __psDenyAccess('Dein Zugang ist nicht mehr vorhanden oder wurde gesperrt. Bitte wende dich an einen Administrator.', false);
+          }
+        }, function (err) { showFatal(err); });
+      }).catch(showFatal);
+    }
+
+    // NEU: Admin-Freigabe geht vor E-Mail-Bestätigung. Wurde der Mitarbeiter
+    // bereits über die Mitarbeiterverwaltung freigegeben (active+approved),
+    // kommt er sofort rein - unabhängig davon, ob/wann die Bestätigungsmail
+    // ankommt. Das eigene Profil lesen ist auch OHNE bestätigte E-Mail
+    // erlaubt (Firestore-Regel: dafür reicht istFirmenKonto()). Ist noch
+    // NICHT freigegeben, läuft es wie bisher: erst E-Mail bestätigen.
+    __psGetBetaDb().collection('users').doc(user.uid).get().then(function (snap) {
+      var d = snap.exists ? snap.data() : null;
+      var bereitsFreigegeben = !!d && d.active === true && d.status === 'approved';
+      if (bereitsFreigegeben || __psIsAdminEmail(user.email)) {
+        proceedToProfileGate();
+        return;
+      }
+      waitForEmailThenProceed();
+    }).catch(function () { waitForEmailThenProceed(); });
+
+    function waitForEmailThenProceed() {
+      user.reload().then(function () {
+        if (!user.emailVerified) {
+          __psRenderWait('verify');
+          var iv = setInterval(function () {
+            user.reload().then(function () {
+              if (user.emailVerified) { clearInterval(iv); location.reload(); }
+            }).catch(function () {});
+          }, 4000);
+          return;
+        }
+        proceedToProfileGate();
+      }).catch(showFatal);
+    }
+  });
+}
+
+__PS_startAuthGate(__startPencilAppWhenReady);
 
 // === v24: Bundle-Laufzeit Dropdown/Badge sichtbar machen (Tailwind-Klassen fehlen im Pencil-Selling) ===
 (function () {
