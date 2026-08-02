@@ -4307,6 +4307,20 @@ try {
   window.__LINK_EMPLOYEE = LINK_EMPLOYEE || '';
 } catch (e) {}
 
+// v75: Admin-Sonderrechte jetzt an die Firestore-Rolle gekoppelt, nicht
+// mehr fest an den Namen "Diego da Silva". window.__PS_IS_ADMIN wird im
+// Auth-Gate (startOnce) gesetzt, sobald das Profil geladen ist - VOR dem
+// ersten React-Render, deshalb hier synchron abrufbar. Der Namensvergleich
+// bleibt als Sicherheitsnetz zusätzlich bestehen (z.B. falls das Profil aus
+// irgendeinem Grund noch kein role-Feld hat).
+function PS_IS_ADMIN() {
+  // SICHERHEITSFIX: KEIN Namens-Fallback mehr. Ein reiner Namensvergleich
+  // (LINK_EMPLOYEE === 'Diego da Silva') wäre über ?agent=... in der URL
+  // von jedem fälschbar gewesen - zählt nur noch die echte, aus dem
+  // Firestore-Profil geladene Rolle.
+  return typeof window !== 'undefined' && window.__PS_IS_ADMIN === true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // v53v: SHOP-WECHSEL-BERECHTIGUNG  (?shopwechsel=1)
 // ───────────────────────────────────────────────────────────────
@@ -4641,7 +4655,7 @@ try {
 // Diego (Admin) sieht wie bisher immer alle Shops.
 // ═══════════════════════════════════════════════════════════════
 const PS_ALLOWED_SHOP_IDS = (() => {
-  if (LINK_EMPLOYEE === 'Diego da Silva') return Object.keys(SHOPS);
+  if (PS_IS_ADMIN()) return Object.keys(SHOPS);
   try {
     const raw = JSON.parse(localStorage.getItem('ps_allowed_shops') || 'null');
     if (Array.isArray(raw) && raw.length) return raw.filter(id => SHOPS[id]);
@@ -4969,11 +4983,18 @@ const pushRowToFirebase = async row => {
 };
 
 // ── Alle Zeilen von Firebase laden (für Admin) ──
-const loadRowsFromFirebase = async () => {
+const loadRowsFromFirebase = async (nurEigeneVon) => {
   try {
     const db = getStatsDb();
     if (!db) return null;
-    const snap = await db.collection('analytics').orderBy('ts', 'desc').limit(2000).get();
+    let q = db.collection('analytics').orderBy('ts', 'desc').limit(2000);
+    // SICHERHEITSFIX: Für normale Mitarbeiter ("Meine Statistik") wird die
+    // Abfrage direkt auf den eigenen Namen eingeschränkt - vorher wurden
+    // immer alle 2000 Datensätze (aller Kollegen/Kunden) geladen und nur in
+    // der Oberfläche client-seitig ausgeblendet, was technisch versierten
+    // Mitarbeitern trotzdem Einsicht in fremde Daten erlaubt hätte.
+    if (nurEigeneVon) q = db.collection('analytics').where('user', '==', nurEigeneVon).orderBy('ts', 'desc').limit(2000);
+    const snap = await q.get();
     return snap.docs.map(d => d.data());
   } catch (e) {
     console.warn('Firebase load failed:', e);
@@ -13384,7 +13405,7 @@ const StatsModal = ({
   const [activeTab, setActiveTab] = useState(employeeMode ? 'coaching' : 'uebersicht');
   const [skipAgentsData, setSkipAgentsData] = useState({}); // { agentName: {count, limit} }
   const [range, setRange] = useState('31');
-  const isDiegoAdmin = !employeeMode && LINK_EMPLOYEE === 'Diego da Silva';
+  const isDiegoAdmin = !employeeMode && PS_IS_ADMIN();
 
   // Im Mitarbeiter-Modus IMMER auf den eigenen Namen gesperrt
   useEffect(() => {
@@ -13393,7 +13414,7 @@ const StatsModal = ({
   useEffect(() => {
     if (!isOpen) return;
     setFbLoading(true);
-    loadRowsFromFirebase().then(data => {
+    loadRowsFromFirebase(employeeMode ? (lockedAgent || LINK_EMPLOYEE) : null).then(data => {
       setFbRows(data);
       setFbLoading(false);
     });
@@ -21459,7 +21480,7 @@ function App() {
         shopId: CURRENT_SHOP.id,
         beratungsId: beratungsId || '',
         result: computedResult,
-        exempt: LINK_EMPLOYEE === 'Diego da Silva' || isExemptEmployee,
+        exempt: PS_IS_ADMIN() || isExemptEmployee,
         skipReasonText: typeof skipReason === 'string' && skipReason.trim() && skipReason !== 'Übersprungen (Admin)' ? skipReason.trim().slice(0, 200) : '',
         canvasStats: buildCanvasStatsFromDrawnStrokes(drawnStrokes, textData, {
           skipReason,
@@ -21639,7 +21660,7 @@ function App() {
         shopId: CURRENT_SHOP.id,
         beratungsId: beratungsId || '',
         result: computedResult,
-        exempt: LINK_EMPLOYEE === 'Diego da Silva' || isExemptEmployee,
+        exempt: PS_IS_ADMIN() || isExemptEmployee,
         skipReasonText: typeof skipReason === 'string' && skipReason.trim() && skipReason !== 'Übersprungen (Admin)' ? skipReason.trim().slice(0, 200) : '',
         canvasStats: buildCanvasStatsFromDrawnStrokes(drawnStrokes, textData, {
           skipReason,
@@ -21738,7 +21759,7 @@ function App() {
 
     // Diego (Admin) + freigeschaltete Mitarbeiter (exempt im Admin) können unbegrenzt überspringen
     // Frisch aus Firestore lesen, damit eine Freischaltung sofort greift (ohne Neuladen)
-    const isDiego = agentName === 'Diego da Silva' || isExemptEmployee || (await getSkipExempt(agentName));
+    const isDiego = PS_IS_ADMIN() || isExemptEmployee || (await getSkipExempt(agentName));
     // v47.5: "Nur Handyfinanzierung" ist eine legitime Bestellung, kein Skip.
     // Zählt NICHT gegen das monatliche Limit (separate Kategorie).
     const isHandyFinanzierung = reasonData === 'Nur Handyfinanzierung';
@@ -27235,7 +27256,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         // v58: aktueller DSL-Anbieter des Kunden
         dslBedarf: _dslBedarf ? 'ja' : 'nein',
         // v58: DSL-Angebot gemacht?
-        exempt: LINK_EMPLOYEE === 'Diego da Silva' || isExemptEmployee,
+        exempt: PS_IS_ADMIN() || isExemptEmployee,
         skipReasonText: typeof skipReason === 'string' && skipReason.trim() && skipReason !== 'Übersprungen (Admin)' ? skipReason.trim().slice(0, 200) : '',
         canvasStats: _cs
       });
@@ -28138,7 +28159,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       d: ICONS.RefreshCw,
       size: 16
     })))));
-  })(), LINK_EMPLOYEE === 'Diego da Silva' && /*#__PURE__*/React.createElement(AdminSafeBoundary, {
+  })(), PS_IS_ADMIN() && /*#__PURE__*/React.createElement(AdminSafeBoundary, {
     onClose: () => setShowAdmin(false)
   }, /*#__PURE__*/React.createElement(AdminModal, {
     isOpen: showAdmin,
@@ -28160,7 +28181,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     isOpen: showStats,
     onClose: () => setShowStats(false),
     onOpenAdmin: () => {
-      if (LINK_EMPLOYEE === 'Diego da Silva') {
+      if (PS_IS_ADMIN()) {
         setShowStats(false);
         setShowAdmin(true);
       }
@@ -28632,14 +28653,14 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v53.7"), LINK_EMPLOYEE && LINK_EMPLOYEE !== 'Diego da Silva' && /*#__PURE__*/React.createElement("button", {
+  }, "v53.7"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
   }, /*#__PURE__*/React.createElement(Icon, {
     d: ICONS.Activity,
     size: 18
-  })), LINK_EMPLOYEE === 'Diego da Silva' && /*#__PURE__*/React.createElement("button", {
+  })), PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: handleOpenStats,
     className: "p-2 text-slate-400 hover:text-blue-600 rounded-full hover:bg-blue-50 transition-colors",
     title: "📊 Statistik & Admin"
@@ -28697,7 +28718,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       whiteSpace: 'nowrap',
       textOverflow: 'ellipsis'
     }
-  }, view === 'situation' ? 'Ihre Aktuelle Situation' : 'Ihr Persönliches Angebot'), view === 'situation' && (LINK_EMPLOYEE === 'Diego da Silva' || LINK_SHOPWECHSEL) && /*#__PURE__*/React.createElement("div", {
+  }, view === 'situation' ? 'Ihre Aktuelle Situation' : 'Ihr Persönliches Angebot'), view === 'situation' && PS_IS_ADMIN() && /*#__PURE__*/React.createElement("div", {
     className: "ps-shop-switch no-print print-hide-toast",
     style: {
       display: 'flex',
@@ -34645,7 +34666,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     size: 18
   })), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      if (LINK_EMPLOYEE === 'Diego da Silva' || isExemptEmployee) {
+      if (PS_IS_ADMIN() || isExemptEmployee) {
         handleSkipToOffer('Übersprungen (Admin)');
       } else {
         setShowSkipReasonModal(true);
@@ -35836,6 +35857,7 @@ function __PS_startAuthGate(startAppFn) {
   function startOnce(profile) {
     if (appStarted) return;
     appStarted = true;
+    try { window.__PS_IS_ADMIN = !!(profile && profile.role === 'admin'); } catch (e) {}
     var _home = (profile && profile.shopId) || 'aalen';
     var _extra = (profile && Array.isArray(profile.extraShopIds)) ? profile.extraShopIds : [];
     var _allowed = [_home].concat(_extra.filter(function (id) { return id !== _home; }));
