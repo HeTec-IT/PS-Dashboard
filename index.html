@@ -4654,14 +4654,17 @@ try {
 // users/{uid} – wird beim Login in 'ps_allowed_shops' gespeichert).
 // Diego (Admin) sieht wie bisher immer alle Shops.
 // ═══════════════════════════════════════════════════════════════
-const PS_ALLOWED_SHOP_IDS = (() => {
+function PS_GET_ALLOWED_SHOP_IDS() {
+  // Dynamisch auswerten: Die Admin-Rolle wird erst nach dem Laden des
+  // Firestore-Profils gesetzt. Eine einmalig beim Seitenstart berechnete
+  // Konstante würde den Vor-Login-Zustand (kein Admin) dauerhaft festhalten.
   if (PS_IS_ADMIN()) return Object.keys(SHOPS);
   try {
     const raw = JSON.parse(localStorage.getItem('ps_allowed_shops') || 'null');
     if (Array.isArray(raw) && raw.length) return raw.filter(id => SHOPS[id]);
   } catch (_) {}
   return [CURRENT_SHOP_ID];
-})();
+}
 // v53: Shop-KENNUNG (id), nicht der Ort.
 // Grund: In einer Stadt können mehrere Shops liegen – z.B.
 // "o2 Crailsheim" und "Telekom Crailsheim". Der Ort wäre bei beiden
@@ -28776,7 +28779,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       cursor: 'pointer',
       maxWidth: '190px'
     }
-  }, Object.keys(SHOPS).filter(id => PS_ALLOWED_SHOP_IDS.includes(id)).map(id => /*#__PURE__*/React.createElement("option", {
+  }, Object.keys(SHOPS).filter(id => PS_GET_ALLOWED_SHOP_IDS().includes(id)).map(id => /*#__PURE__*/React.createElement("option", {
     key: id,
     value: id
   }, SHOPS[id].name)))), view === 'offer' && /*#__PURE__*/React.createElement("div", {
@@ -35857,10 +35860,16 @@ function __PS_startAuthGate(startAppFn) {
   function startOnce(profile) {
     if (appStarted) return;
     appStarted = true;
-    try { window.__PS_IS_ADMIN = !!(profile && profile.role === 'admin'); } catch (e) {}
+    var _isAdmin = !!(profile && profile.role === 'admin');
+    try { window.__PS_IS_ADMIN = _isAdmin; } catch (e) {}
     var _home = (profile && profile.shopId) || 'aalen';
     var _extra = (profile && Array.isArray(profile.extraShopIds)) ? profile.extraShopIds : [];
-    var _allowed = [_home].concat(_extra.filter(function (id) { return id !== _home; }));
+    // Administratoren dürfen immer alle Shops nutzen. Ohne diese Ausnahme
+    // wurde Diego nach jedem Reload wieder auf den Heimatshop zurückgesetzt,
+    // obwohl das Dropdown durch die Admin-Rolle sichtbar war.
+    var _allowed = _isAdmin
+      ? Object.keys(SHOPS)
+      : [_home].concat(_extra.filter(function (id) { return id !== _home; }));
     var _priorShop = null;
     try { _priorShop = localStorage.getItem('ps_shop'); } catch (e) {}
     // BUGFIX: 'ps_shop' NICHT mehr blind auf den Heimatshop zurücksetzen –
@@ -35881,10 +35890,10 @@ function __PS_startAuthGate(startAppFn) {
       // Standorte frei – exakt dieselbe bereits im Admin-Dashboard vorhandene
       // Logik, hier nur konsumiert.
       localStorage.setItem('ps_allowed_shops', JSON.stringify(_allowed));
-      localStorage.setItem('ps_shopwechsel', _extra.length > 0 ? '1' : '0');
+      localStorage.setItem('ps_shopwechsel', (_isAdmin || _extra.length > 0) ? '1' : '0');
     } catch (e) {}
-    // CURRENT_SHOP_ID (und PS_ALLOWED_SHOP_IDS) sind oben im Skript als
-    // const berechnet, BEVOR das Firestore-Profil geladen ist – also aus
+    // CURRENT_SHOP_ID wird oben im Skript als const berechnet, BEVOR das
+    // Firestore-Profil geladen ist – also aus
     // dem 'ps_shop', der VOR diesem Aufruf in localStorage stand. Nur wenn
     // der jetzt ermittelte, tatsächlich gültige Shop davon abweicht (z.B.
     // beim allerersten Start, oder wenn eine Freigabe entzogen wurde), hilft
