@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v53.7)
+         KEIN HTML-CACHE  (v53.7-pdf-single-archive-fix)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -21022,7 +21022,9 @@ function App() {
       })();
       const _datum = new Date().toISOString().slice(0, 10);
       const blob = await createPrintLookPdfBlob(triggerToast, ensurePrintHeaders, {
-        addPageNumbers: true
+        addPageNumbers: true,
+        archiveOptimized: true,
+        includeRecommendations: false
       });
       await parkArchiveEntry({
         id: 'park_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -21399,8 +21401,8 @@ function App() {
               });
               window.__lastPdfBlob = blob;
               window.__lastPdfFile = pdfFile;
-              // NEU (v53.5): interne Archiv-PDF im Hintergrund an den neuen Flow senden
-              sendArchivCopyToNewFlow(blob, { type: 'abschluss' });
+              // Archivierung bewusst ERST bei Klick auf „Ins Archiv“.
+              // Hier wird ausschließlich die Kunden-PDF bereitgestellt.
               // v57b: IMMER "Jetzt teilen"-Dialog. Direkt-Teilen scheitert auf
               // iPad/Android nach langer Erzeugung (Geste abgelaufen). Der Tap im
               // Dialog liefert die frische Geste → natives Menü öffnet garantiert.
@@ -21579,7 +21581,9 @@ function App() {
                   }
                 })();
                 const blob = await createPrintLookPdfBlob(triggerToast, ensurePrintHeaders, {
-                  addPageNumbers: true
+                  addPageNumbers: true,
+                  archiveOptimized: true,
+        includeRecommendations: false
                 });
                 await parkArchiveEntry({
                   id: 'park_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -23721,6 +23725,13 @@ function App() {
   const createPrintLookPdfBlob = async (triggerToast, ensurePrintHeaders, opts = {}) => {
     if (!window.html2pdf) throw new Error('html2pdf missing');
     const addPageNumbers = false; // FIX: kein "Seite X / N" im Share-PDF
+    // Archiv-PDF: kleinere Datei, Kunden-PDF bleibt unveraendert.
+    // JPEG 0.90 + maximal scale 2 reduziert die Groesse typischerweise deutlich,
+    // ohne auf A4 oder am Bildschirm sichtbar an Schaerfe zu verlieren.
+    const archiveOptimized = opts.archiveOptimized === true;
+    // Kunden-PDF darf die Empfehlungsseite enthalten; die interne Archiv-PDF nicht.
+    // Standard bleibt true, damit alle bisherigen Kunden-/Teilen-Abläufe unverändert bleiben.
+    const includeRecommendations = opts.includeRecommendations !== false;
 
     // === ORIENTIERUNG (v42.2) ===
     // RELEASE-STAND: Export ist IMMER Querformat (das bewährte, getestete Layout).
@@ -23782,7 +23793,7 @@ function App() {
     // Share-PDF: eigener Modus im Iframe
     try {
       doc.body.classList.add('pdf-share-mode');
-      if (window.__printRecommendationsEnabled) doc.body.classList.add('print-recs-enabled');
+      if (includeRecommendations && window.__printRecommendationsEnabled) doc.body.classList.add('print-recs-enabled');
 
       // ULTRA SHARP v37: avoid blur from CSS transforms/filters during rasterization
       try {
@@ -24000,6 +24011,8 @@ function App() {
 
 input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!important}
          .pdf-share-mode .share-page{break-after:page; page-break-after:always; width:297mm; max-width:297mm; height:210mm; min-height:210mm; max-height:210mm; display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;}
+         /* Wichtig: Nach der letzten echten Seite keinen weiteren Umbruch erzwingen. */
+         .pdf-share-mode .share-page:last-child{break-after:auto !important; page-break-after:auto !important;}
          .pdf-share-mode .share-page-header{flex:0 0 16mm; height:16mm; min-height:16mm; max-height:16mm; box-sizing:border-box;}
          .pdf-share-mode .share-page-content{flex:1 1 auto; min-height:0; height:calc(210mm - 16mm); overflow:hidden; box-sizing:border-box;}
          .pdf-share-mode .share-cover{height:100% !important; min-height:100% !important; max-height:100% !important; box-sizing:border-box;}
@@ -25279,7 +25292,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         const pel = document.querySelector('.print-netzwerk-anlage');
         if (pel) anlageHtml = pel.innerHTML || '';
       }
-      if (anlageHtml && anlageHtml.trim().length > 10) {
+      if (includeRecommendations && anlageHtml && anlageHtml.trim().length > 10) {
         const p3content = doc.createElement('div');
         p3content.style.cssText = 'width:100%;height:100%;overflow:hidden;box-sizing:border-box;background:#ffffff;';
         p3content.innerHTML = anlageHtml;
@@ -25331,12 +25344,12 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       // ══════════════════════════════════════════════════════════════════
       image: {
         type: 'jpeg',
-        quality: 0.98
+        quality: archiveOptimized ? 0.90 : 0.98
       },
       html2canvas: {
         // iOS/iPad: Canvas-Pixel-Limit (~16M px) → hohe scale erzeugt Leerseiten.
         // Daher auf iOS-Geräten scale reduzieren.
-        scale: function () {
+        scale: Math.min(archiveOptimized ? 2 : 99, function () {
           try {
             var ua = navigator.userAgent || '';
             var isIOS = /iPad|iPhone|iPod/.test(ua) || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
@@ -25376,7 +25389,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
           } catch (e) {
             return 2;
           }
-        }(),
+        }()),
         useCORS: true,
         allowTaint: true,
         imageTimeout: 20000,
@@ -25744,6 +25757,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     try {
       // --- HARD LIMIT: keep ONLY first 4 pages in the generated PDF (Share) ---
       const sourceEl = doc.getElementById('pdf-content') || doc.getElementById('print-container') || doc.body;
+      // Anzahl der wirklich gebauten Seiten. Das ist verlaesslicher als eine
+      // Formel mit optionaler Anlage und verhindert eine leere Schlussseite.
+      const expectedSharePages = Math.max(1, sourceEl.querySelectorAll('.share-page').length);
 
       // ═══ v52.2 APPLE-FIX: Alle Bilder VOR dem Rastern als dataURL einbetten ═══
       // Safari/iOS verweigert externe Bilder (z.B. Aktionsmappe-Overlays) beim
@@ -25803,9 +25819,10 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       if (pdf && typeof pdf.getNumberOfPages === 'function') {
         try {
           const total = pdf.getNumberOfPages();
-          // Anlage-Seite mitrechnen wenn vorhanden
-          const hasAnlage = !!(window.__anlageHtml && window.__anlageHtml.trim().length > 10);
-          const maxPages = 2 + offerPageCount + 1 + (hasAnlage ? 1 : 0); // Cover + Sit + Angebote + Outro + ggf. Anlage
+          // Exakt auf die im Export-DOM vorhandenen Seiten begrenzen.
+          // Die alte Formel konnte eine optionale Anlage mitzaehlen, obwohl sie
+          // nicht sichtbar gerendert wurde; dadurch blieb oft eine weisse Seite.
+          const maxPages = expectedSharePages;
           if (typeof pdf.deletePage === 'function') {
             // Überzählige Seiten am Ende entfernen (iPad erzeugt oft Leerseiten)
             for (let i = total; i > maxPages; i--) {
@@ -25829,6 +25846,20 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
                     } catch (_) {}
                   }
                 }
+              }
+            } catch (_) {}
+
+            // Zweite Sicherung: Eine letzte Seite ohne Bild- oder Textoperator
+            // ist nur PDF-Boilerplate und kann gefahrlos entfernt werden.
+            try {
+              while (pdf.getNumberOfPages() > 1) {
+                const last = pdf.getNumberOfPages();
+                const pageInfo = pdf.internal.pages[last];
+                const stream = Array.isArray(pageInfo) ? pageInfo.join('\n') : String(pageInfo || '');
+                const hasPaintedObject = /\/[A-Za-z0-9_.-]+\s+Do\b/.test(stream);
+                const hasTextOperator = /\b(?:Tj|TJ)\b/.test(stream);
+                if (hasPaintedObject || hasTextOperator) break;
+                pdf.deletePage(last);
               }
             } catch (_) {}
           }
@@ -26172,7 +26203,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       const _hasTarget = typeof ARCHIVE_FLOW_URL === 'string' && ARCHIVE_FLOW_URL && !ARCHIVE_FLOW_URL.includes('PASTE_NEW_POWER_AUTOMATE_URL_HERE') || !!_webhook;
       if (!_hasTarget) return; // Upload-Funktion bewusst inaktiv → nichts rendern, nichts senden
       const blob = await createPrintLookPdfBlob(triggerToast, ensurePrintHeaders, {
-        addPageNumbers: true
+        addPageNumbers: true,
+        archiveOptimized: true,
+        includeRecommendations: false
       });
       const agent = getAgent();
       const dsl = getDsl();
@@ -26844,7 +26877,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         } catch (e) {}
       }, 30000);
       blob = await createPrintLookPdfBlob(triggerToast, ensurePrintHeaders, {
-        addPageNumbers: true
+        addPageNumbers: true,
+        archiveOptimized: true,
+        includeRecommendations: false
       });
       clearTimeout(_t);
       hideOverlay2();
@@ -27393,8 +27428,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         } catch (e) {}
       }
       logQuoteToStatistics();
-      // NEU (v53.5): interne Archiv-PDF im Hintergrund an den neuen Flow senden
-      sendArchivCopyToNewFlow(blob);
+      // Archivierung bewusst ERST bei Klick auf „Ins Archiv“.
+      // Die Kunden-PDF darf nicht zusätzlich an den Archiv-Flow gehen.
     }
 
     // DIREKT teilen – die Geste (Klick bzw. „Weiter" der Namensabfrage) ist frisch
@@ -27489,8 +27524,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
 
       // ── Statistik sofort loggen (zählt unabhängig vom Teilen-Weg als "Angebot") ──
       logQuoteToStatistics();
-      // NEU (v53.5): interne Archiv-PDF im Hintergrund an den neuen Flow senden
-      sendArchivCopyToNewFlow(blob);
+      // Archivierung bewusst ERST bei Klick auf „Ins Archiv“.
+      // Die Kunden-PDF darf nicht zusätzlich an den Archiv-Flow gehen.
 
       // v53b: DIREKT teilen – der Blob lag schon bereit, die Geste
       // (Klick bzw. „Weiter" der Namensabfrage) ist noch frisch.
