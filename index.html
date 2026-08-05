@@ -4492,14 +4492,18 @@ const STATS_PASSWORD = (() => {
   }
 })();
 
-// ── Firebase Stats Config (pencil-selling-stats) ──
+// ── Firebase Hauptprojekt: identisch mit Admin und Firestore-Regeln ──
+// WICHTIG: Anmeldung, Benutzerprofile, Statistik, News und gespeicherte
+// Angebote müssen aus demselben Projekt kommen. Das frühere
+// "beta-pencil-selling" führte nach erfolgreichem Login zur sofortigen
+// Sicherheits-Abmeldung, weil users/{uid} im Admin-Projekt nicht gefunden wurde.
 const STATS_FB_CONFIG = {
-  apiKey: "AIzaSyAV2CD6Kwp0WVmeGuVO4lIHbAf-UhrQZ1M",
-  authDomain: "beta-pencil-selling.firebaseapp.com",
-  projectId: "beta-pencil-selling",
-  storageBucket: "beta-pencil-selling.firebasestorage.app",
-  messagingSenderId: "154760755449",
-  appId: "1:154760755449:web:a4a006f738077eb5344a28"
+  apiKey: "AIzaSyD0z1CX9vcdRQPtIo9pCjZ7Xs1h6dLl_8w",
+  authDomain: "o2-pencil-selling.firebaseapp.com",
+  projectId: "o2-pencil-selling",
+  storageBucket: "o2-pencil-selling.firebasestorage.app",
+  messagingSenderId: "347119579425",
+  appId: "1:347119579425:web:afbb0b60fe6a266627ce60"
 };
 
 // ── Firebase Stats DB singleton ──
@@ -4543,8 +4547,7 @@ const SHOPS = {
     // exakter Google-Bewertungs-Deeplink (vorhanden)
     reviewUrl: 'https://www.google.com/search?q=o2+Shop+Aalen&ludocid=4324091216711915803&hl=de#lrd=0x47991b873100b771:0x3c02420d3480191b,1',
     qrUrl: 'https://www.google.com/search?hl=de-DE&gl=de&q=o2+Shop,+N%C3%B6rdlicher+Stadtgraben+6,+73430+Aalen&ludocid=4324091216711915803&lsig=AB86z5X0AwWKxq2sT1xY0AQEbR3v#lrd=0x47991b873100b771:0x3c02420d3480191b,3',
-    instagram: 'https://www.instagram.com/o2shop_aalen/',
-    sharepoint: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgAHpSSNmY8kRoazx6AbdsHDAVpB4oR2j-ewgCX7VNeaqvc?e=NAL4Th'
+    instagram: 'https://www.instagram.com/o2shop_aalen/'
   },
   crailsheim: {
     id: 'crailsheim',
@@ -4552,8 +4555,7 @@ const SHOPS = {
     ort: 'Crailsheim',
     adresse: 'Karlstraße 37, 74564 Crailsheim',
     tel: '07951 - 469327',
-    instagram: 'https://www.instagram.com/o2shop_crailsheim/',
-    sharepoint: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgD7iy3258xGQqc11CS8SgctAUtkKyIku-H8dg7R7kQ4_fA?e=Uddgvo'
+    instagram: 'https://www.instagram.com/o2shop_crailsheim/'
   },
   'schwaebisch-hall': {
     id: 'schwaebisch-hall',
@@ -4562,8 +4564,7 @@ const SHOPS = {
     adresse: 'Neue Straße 30, 74523 Schwäbisch Hall',
     tel: '0791 - 97822060',
     reviewUrl: 'https://www.google.com/search?hl=de-DE&gl=de&q=o2+Shop,+Neue+Str.+30,+74523+Schw%C3%A4bisch+Hall&ludocid=17197322328347862166&lsig=AB86z5W8AZrwGABm6Sx9Q1becCkN#lrd=0x4798500b73b8c245:0xeea9298ad5116496,3',
-    instagram: 'https://www.instagram.com/o2shop_schwaebischhall/',
-    sharepoint: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgA_s-kOzmaVRLTlMAeI1jDYAdO9VLrVtyBm0uGtAPrK6u0?e=gHvLn5'
+    instagram: 'https://www.instagram.com/o2shop_schwaebischhall/'
   },
   freilassing: {
     id: 'freilassing',
@@ -4595,8 +4596,7 @@ const SHOPS = {
     ort: 'Sindelfingen',
     adresse: 'Mercedes Straße 12, 71063 Sindelfingen',
     tel: '07031 - 2645439',
-    instagram: 'https://www.instagram.com/o2shop_sindelfingen/',
-    sharepoint: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgBU3U8w660DQov-Pp9SgbmOAW3zWR0CJs1w_spETypgOII?e=LrFa1M'
+    instagram: 'https://www.instagram.com/o2shop_sindelfingen/'
   },
   'stuttgart-vaihingen': {
     id: 'stuttgart-vaihingen',
@@ -4604,8 +4604,7 @@ const SHOPS = {
     ort: 'Stuttgart-Vaihingen',
     adresse: 'Robert-Koch-Straße 2, 70563 Stuttgart',
     tel: '0711 - 78781490',
-instagram: 'https://www.instagram.com/o2.shop_vaihingen/',
-    sharepoint: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgBNj9K03a2HTLsJL03BsFAYAbfAou1V5L5__pHvbIFdtLo?e=jp2u1L'
+instagram: 'https://www.instagram.com/o2.shop_vaihingen/'
   },
   traunreut: {
     id: 'traunreut',
@@ -18968,13 +18967,19 @@ function App() {
   const ARCHIVE_FLOW_KEY = 'hetec-ps-9f3k';
   // Archiv-Postfach: hierhin schickt der Mitarbeiter das abgeschlossene Angebot (Power Automate sortiert es weiter)
   const ARCHIV_EMAIL = 'pencil-selling@hetec-gmbh.de';
-  // SharePoint-Ordner zum direkten Abrufen der archivierten PDFs.
-  // Pro Shop hinterlegt (SHOPS[...].sharepoint) und aktualisiert sich beim
-  // Shopwechsel automatisch, da CURRENT_SHOP nach dem Reload neu berechnet wird.
-  // Fallback: alter genereller Ordner, falls für einen Shop kein Link hinterlegt ist.
-  const ARCHIV_URL_FALLBACK = 'https://hetecgmbh.sharepoint.com/:f:/s/Hetec-Shop-GmbH/IgDeb7bYA8bER5HhUGMDPe3uAWrUlPmHv9e9FV7lUW2WpDA';
-  const ARCHIV_URL_ABSCHLUESSE = CURRENT_SHOP.sharepoint || ARCHIV_URL_FALLBACK;
-  const ARCHIV_URL_ANGEBOTE = CURRENT_SHOP.sharepoint || ARCHIV_URL_FALLBACK;
+  // Shopabhängige SharePoint-/OneDrive-Ordner für das Archiv-Popup.
+  // WICHTIG: Diese Links sind NICHT die Aktionsmappe. Die Aktionsmappe nutzt
+  // immer fest https://hetec-it.github.io/Aktionsmappen-Dashboard/.
+  // Der jeweilige Shopordner enthält die Archivbereiche für Abschlüsse,
+  // Angebote sowie die PDF-Auswahl beim Finalisieren eines Angebots.
+  const ARCHIV_URL_BY_SHOP = Object.freeze({
+    aalen: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgAHpSSNmY8kRoazx6AbdsHDAVpB4oR2j-ewgCX7VNeaqvc?e=NAL4Th',
+    crailsheim: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgD7iy3258xGQqc11CS8SgctAUtkKyIku-H8dg7R7kQ4_fA?e=Uddgvo',
+    'schwaebisch-hall': 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgA_s-kOzmaVRLTlMAeI1jDYAdO9VLrVtyBm0uGtAPrK6u0?e=gHvLn5',
+    sindelfingen: 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgBU3U8w660DQov-Pp9SgbmOAW3zWR0CJs1w_spETypgOII?e=LrFa1M',
+    'stuttgart-vaihingen': 'https://hetecgmbh.sharepoint.com/:f:/s/PencilSelling/IgBNj9K03a2HTLsJL03BsFAYAbfAou1V5L5__pHvbIFdtLo?e=jp2u1L'
+  });
+  const CURRENT_ARCHIV_URL = ARCHIV_URL_BY_SHOP[CURRENT_SHOP_ID] || '';
 
   // NOTE: Tablet-Browser im "Desktopmodus" kann 'Android' aus dem User-Agent entfernen.
   // Daher UI nicht nur nach UA, sondern nach echter WebShare-Fähigkeit anzeigen.
@@ -20029,7 +20034,7 @@ function App() {
   const translatedTextLiveRef = useRef({});
   const [staticTranslations, setStaticTranslations] = useState({});
   const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
-  const [oneDriveLink, setOneDriveLink] = useState('https://hetec-it.github.io/Aktionsmappen-Dashboard/');
+  const [oneDriveLink, setOneDriveLink] = useState(BUNDLE_URL);
   const [isDrawing, setIsDrawing] = useState(false);
   const [canvasImages, setCanvasImages] = useState({
     offer1: null,
@@ -21333,12 +21338,9 @@ function App() {
     }
   }, [triggerToast]);
   const openOneDriveLink = () => {
-    if (oneDriveLink && oneDriveLink.startsWith('http')) {
-      window.open(oneDriveLink, '_blank');
-      triggerToast('Aktionsmappe geöffnet.');
-    } else {
-      triggerToast('WICHTIG: Kein gültiger OneDrive Link hinterlegt. Bitte pflegen Sie den Link in den Einstellungen.');
-    }
+    // Die Aktionsmappe ist unabhängig vom Shop und öffnet immer das Dashboard.
+    window.open(BUNDLE_URL, '_blank', 'noopener');
+    triggerToast('Aktionsmappe geöffnet.');
   };
   const handleFileSelect = event => {
     const file = event.target.files?.[0];
@@ -30093,7 +30095,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
   })))), document.body), showPdfFinalize && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PdfFinalizeModal, {
     onClose: () => setShowPdfFinalize(false),
     onSend: handlePdfFinalizeSend,
-    angeboteUrl: '',
+    angeboteUrl: CURRENT_ARCHIV_URL,
     onRestore: offerObj => {
       // v52: Eingebettete Arbeitskopie → komplettes Pencil Selling laden,
       // dann normaler Finalisieren-Weg (Abschließen? → Unterschrift → Abschluss-Archiv)
@@ -30325,7 +30327,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     }
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      window.open(ARCHIV_URL_ABSCHLUESSE, '_blank', 'noopener');
+      if (!CURRENT_ARCHIV_URL) {
+        triggerToast(`Für ${CURRENT_SHOP.name} ist noch kein Archiv-Link hinterlegt.`);
+        return;
+      }
+      window.open(CURRENT_ARCHIV_URL, '_blank', 'noopener');
       setShowArchivPopup(false);
     },
     style: {
@@ -30374,7 +30380,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     }
   }, "→")), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      window.open(ARCHIV_URL_ANGEBOTE, '_blank', 'noopener');
+      if (!CURRENT_ARCHIV_URL) {
+        triggerToast(`Für ${CURRENT_SHOP.name} ist noch kein Archiv-Link hinterlegt.`);
+        return;
+      }
+      window.open(CURRENT_ARCHIV_URL, '_blank', 'noopener');
       setShowArchivPopup(false);
     },
     style: {
