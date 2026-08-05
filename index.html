@@ -189,7 +189,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '54.1.0';
+    window.APP_VERSION = '54.5.0';
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -11561,9 +11561,28 @@ const TvPriceModal = ({
   const [customPrices, setCustomPrices] = useState({});
   const [editingCell, setEditingCell] = useState(null); // { prov, col, row, key }
   const [editValue, setEditValue] = useState('');
+  // v54.2.0: Vergleich – bis zu 3 Pakete anbieterübergreifend anpinnen (Lang-Druck auf Paket)
+  const [pinned, setPinned] = useState([]);
+  const [pinLimitHint, setPinLimitHint] = useState(false);
   const longPressTimer = React.useRef(null);
-  const startLongPress = () => {};
-  const cancelLongPress = () => {};
+  const pinFiredRef = React.useRef(false);
+  const startLongPress = entry => {
+    pinFiredRef.current = false;
+    clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => {
+      pinFiredRef.current = true;
+      setPinned(prev => {
+        if (prev.some(p => p.id === entry.id)) return prev.filter(p => p.id !== entry.id);
+        if (prev.length >= 3) {
+          setPinLimitHint(true);
+          setTimeout(() => setPinLimitHint(false), 1600);
+          return prev;
+        }
+        return [...prev, entry];
+      });
+    }, 480);
+  };
+  const cancelLongPress = () => clearTimeout(longPressTimer.current);
   const confirmEdit = () => {
     if (!editingCell) return;
     const val = parseFloat(String(editValue).replace(',', '.'));
@@ -11907,7 +11926,7 @@ const TvPriceModal = ({
     style: {
       color: '#7c3aed'
     }
-  }, "Lang drücken auf Preis zum Anpassen")))), /*#__PURE__*/React.createElement("div", {
+  }, "Lang drücken auf Paket = für Vergleich merken")))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -11971,7 +11990,170 @@ const TvPriceModal = ({
       borderTop: provider === p.id ? '2px solid ' + p.color : '2px solid transparent',
       outline: 'none'
     }
-  }, p.label))), /*#__PURE__*/React.createElement("div", {
+  }, p.label))), pinned.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '8px',
+      padding: '10px 24px',
+      background: '#faf5ff',
+      borderBottom: '1px solid #f1f5f9',
+      flexWrap: 'wrap',
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: '10px',
+      fontWeight: 800,
+      color: '#7c3aed',
+      textTransform: 'uppercase',
+      letterSpacing: '0.06em',
+      paddingTop: '6px'
+    }
+  }, "Vergleich (", pinned.length, "/3)"), pinLimitHint && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: '10px',
+      fontWeight: 700,
+      color: '#dc2626',
+      paddingTop: '6px'
+    }
+  }, "Max. 3 – erst einen entfernen"), pinned.map(p => {
+    const featureList = (p.features || []).slice(0, 5);
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '3px',
+        background: '#ffffff',
+        border: '1.5px solid ' + p.providerColor,
+        borderRadius: '12px',
+        padding: '7px 10px 8px',
+        minWidth: '168px',
+        maxWidth: '230px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '6px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: '7px',
+        height: '7px',
+        borderRadius: '50%',
+        background: p.providerColor,
+        flexShrink: 0
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: '9px',
+        fontWeight: 800,
+        color: p.providerColor,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, p.providerLabel)), /*#__PURE__*/React.createElement("button", {
+      onClick: () => setPinned(prev => prev.filter(x => x.id !== p.id)),
+      title: "Entfernen",
+      style: {
+        width: '16px',
+        height: '16px',
+        borderRadius: '4px',
+        border: 'none',
+        background: '#f1f5f9',
+        color: '#64748b',
+        fontSize: '11px',
+        fontWeight: 900,
+        cursor: 'pointer',
+        lineHeight: 1,
+        flexShrink: 0
+      }
+    }, "×")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '12px',
+        fontWeight: 900,
+        color: '#1e293b',
+        lineHeight: 1.25
+      }
+    }, p.packageLabel, p.packageSub ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 600,
+        color: '#94a3b8',
+        fontSize: '10px'
+      }
+    }, " · ", p.packageSub) : null), p.badge ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '9px',
+        fontWeight: 800,
+        color: p.providerColor
+      }
+    }, p.badge) : null, featureList.length > 0 ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1px',
+        margin: '3px 0'
+      }
+    }, featureList.map((f, fi) => /*#__PURE__*/React.createElement("div", {
+      key: fi,
+      style: {
+        fontSize: '9.5px',
+        color: '#475569',
+        fontWeight: 600,
+        lineHeight: 1.3
+      }
+    }, "✓ ", f))) : null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '6px',
+        marginTop: '2px',
+        paddingTop: '5px',
+        borderTop: '1px solid #f1f5f9'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: '14px',
+        fontWeight: 900,
+        color: p.providerColor
+      }
+    }, p.price.toFixed(2), " €"), /*#__PURE__*/React.createElement("button", {
+      onClick: () => onUebernehmen && onUebernehmen({
+        price: p.price.toFixed(2),
+        provider: p.provider,
+        providerLabel: p.providerLabel,
+        packageLabel: p.packageLabel,
+        packageSub: p.packageSub,
+        color: p.providerColor
+      }),
+      title: "Übernehmen",
+      style: {
+        fontSize: '9px',
+        fontWeight: 800,
+        padding: '4px 8px',
+        borderRadius: '6px',
+        border: 'none',
+        background: p.providerColor,
+        color: '#fff',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap'
+      }
+    }, "✓ übernehmen")));
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflowY: 'auto',
@@ -12132,12 +12314,38 @@ const TvPriceModal = ({
     }
   }, prevTotal > 0 ? prevTotal.toFixed(2) + ' €' : '—'))), pd.cols.map(col => {
     const isActive = col.id === activeCol;
+    const pinId = provider + '_' + col.id;
+    const isPinned = pinned.some(p => p.id === pinId);
     return /*#__PURE__*/React.createElement("button", {
       key: col.id,
-      onClick: () => setSelectedCol(col.id),
+      onClick: () => {
+        if (pinFiredRef.current) {
+          pinFiredRef.current = false;
+          return;
+        }
+        setSelectedCol(col.id);
+      },
+      onPointerDown: () => startLongPress({
+        id: pinId,
+        provider,
+        providerLabel: pd.label,
+        providerColor: pd.color,
+        packageLabel: col.label,
+        packageSub: col.sub,
+        price: dynamicTotals[col.id],
+        badge: col.badge || null,
+        features: pd.rows.filter((row, ri) => col.checks[ri]).map(row => row.label)
+      }),
+      onPointerUp: cancelLongPress,
+      onPointerLeave: cancelLongPress,
+      onPointerCancel: cancelLongPress,
       style: {
+        position: 'relative',
+        WebkitTouchCallout: 'none',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
         borderRadius: '14px',
-        border: '2px solid ' + (isActive ? pd.color : '#e2e8f0'),
+        border: '2px solid ' + (isActive ? pd.color : isPinned ? '#7c3aed' : '#e2e8f0'),
         padding: '14px',
         display: 'flex',
         flexDirection: 'column',
@@ -12149,7 +12357,23 @@ const TvPriceModal = ({
         boxShadow: isActive ? '0 4px 16px ' + pd.color + '22' : 'none',
         outline: 'none'
       }
-    }, /*#__PURE__*/React.createElement("div", null, col.badge && /*#__PURE__*/React.createElement("div", {
+    }, isPinned && /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: 'absolute',
+        top: '-8px',
+        right: '10px',
+        background: '#7c3aed',
+        color: '#fff',
+        borderRadius: '999px',
+        width: '20px',
+        height: '20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '11px',
+        boxShadow: '0 2px 6px rgba(124,58,237,0.4)'
+      }
+    }, "📌"), /*#__PURE__*/React.createElement("div", null, col.badge && /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'inline-block',
         background: pd.color,
@@ -16016,20 +16240,31 @@ const redrawCanvas = (canvas, strokes, scaleFactor = 1, key = '') => {
   }
 
   // Offscreen-Puffer: verhindert leeren Frame beim canvas.width-Wechsel
+  // v54.2.0: Puffer wird am Canvas gecacht statt bei jedem Redraw neu alloziert –
+  // die Neuallokation pro Aufruf war teuer genug, dass der Browser beim Radieren
+  // (viele Redraws pro Sekunde) nie zum Zeichnen kam und erst nach Loslassen
+  // ein Frame zeigte. Größe unverändert → wiederverwenden, sonst neu anlegen.
   let offscreen, octx;
   const w = Math.max(1, Math.round(__rectW));
   const h = Math.max(1, Math.round(__rectH));
   const targetW = Math.round(w * dpr);
   const targetH = Math.round(h * dpr);
   try {
-    if (typeof OffscreenCanvas !== 'undefined') {
-      offscreen = new OffscreenCanvas(targetW, targetH);
+    if (canvas.__offBuf && canvas.__offBuf.width === targetW && canvas.__offBuf.height === targetH) {
+      offscreen = canvas.__offBuf;
+      octx = canvas.__offCtx;
     } else {
-      offscreen = document.createElement('canvas');
-      offscreen.width = targetW;
-      offscreen.height = targetH;
+      if (typeof OffscreenCanvas !== 'undefined') {
+        offscreen = new OffscreenCanvas(targetW, targetH);
+      } else {
+        offscreen = document.createElement('canvas');
+        offscreen.width = targetW;
+        offscreen.height = targetH;
+      }
+      octx = offscreen.getContext('2d');
+      canvas.__offBuf = offscreen;
+      canvas.__offCtx = octx;
     }
-    octx = offscreen.getContext('2d');
   } catch (_) {}
   const useOffscreen = !!(offscreen && octx);
   const ctx = useOffscreen ? octx : canvas.getContext('2d');
@@ -20310,6 +20545,46 @@ function App() {
     });
     return out;
   }, [displayLanguage]);
+  // v54.3.0: WLAN-/Speed-Empfehlung volltextbasiert via MyMemory übersetzen (statt nur
+  // fixer Phrasen-Ersetzung). Cache liegt in translatedText[lang]['__rec_'+Originaltext],
+  // Key wechselt automatisch mit dem Text -> keine manuelle Invalidierung nötig.
+  const recTranslateTimerRef = useRef(null);
+  useEffect(() => {
+    if (displayLanguage === 'de') return;
+    const items = [wlanRecommendation, speedRecommendation].filter(Boolean);
+    if (items.length === 0) return;
+    clearTimeout(recTranslateTimerRef.current);
+    recTranslateTimerRef.current = setTimeout(async () => {
+      for (const raw of items) {
+        const cacheKey = '__rec_' + raw;
+        if (translatedText[displayLanguage]?.[cacheKey]) continue;
+        try {
+          const res = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(raw.slice(0, 480)) + '&langpair=de|' + displayLanguage);
+          if (!res.ok) continue;
+          const j = await res.json();
+          const t = j?.responseData?.translatedText;
+          if (t && String(j?.responseStatus) === '200' && t.trim() && !/MYMEMORY WARNING/i.test(t)) {
+            setTranslatedText(prev => ({
+              ...prev,
+              [displayLanguage]: {
+                ...(prev[displayLanguage] || {}),
+                [cacheKey]: t
+              }
+            }));
+          }
+        } catch (_) {}
+      }
+    }, 500);
+    return () => clearTimeout(recTranslateTimerRef.current);
+  }, [wlanRecommendation, speedRecommendation, displayLanguage]);
+  // Anzeige-Helfer: MyMemory-Volltext bevorzugt, bis dahin sofortige Phrasen-Näherung
+  // (getRecommendationText) als Platzhalter -> kein Warten auf leeren/deutschen Text.
+  const getRecDisplayText = useCallback(raw => {
+    if (!raw) return raw;
+    if (displayLanguage === 'de') return raw;
+    const cached = translatedText[displayLanguage]?.['__rec_' + raw];
+    return cached || getRecommendationText(raw);
+  }, [translatedText, displayLanguage, getRecommendationText]);
   const getFloorLabel = useCallback(value => {
     const keyByGerman = { 'Keller': 'FloorBasement', 'EG': 'FloorGround', 'OG 1': 'FloorUpper1', 'OG 2': 'FloorUpper2', 'DG': 'FloorAttic' };
     return keyByGerman[value] ? getStaticLabel(keyByGerman[value]) : value;
@@ -23431,7 +23706,24 @@ function App() {
         session.lastX = cssX;
         session.lastY = cssY;
       }
-      if (changed) forceRedrawCanvas(canvas, session.working, 1, session.key);
+      // v54.2.0: Repaint auf max. 1x/Frame drosseln (rAF) – der Treffertest läuft
+      // weiter bei jedem Move (kein übersprungener Strich), nur das teure Neuzeichnen
+      // wird gebündelt. Vorher lief bei jedem Pointer-Move ein voller Redraw, wodurch
+      // der Browser während des Ziehens nie zum Malen kam (Bild sprang erst beim
+      // Loslassen auf den Endzustand statt Strich für Strich live zu verschwinden).
+      if (changed) {
+        session.dirty = true;
+        if (!session.rafPending) {
+          session.rafPending = true;
+          requestAnimationFrame(() => {
+            session.rafPending = false;
+            if (session.dirty && eraserSessionRef.current === session) {
+              session.dirty = false;
+              forceRedrawCanvas(session.canvas, session.working, 1, session.key);
+            }
+          });
+        }
+      }
       return;
     }
     if (!isDrawingRef.current || !currentStrokeRef.current) return;
@@ -27784,7 +28076,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
                         </div>
                       </div>`;
     }
-    const recItemsHtml = [wlanRecommendation ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:#dcfce7;border:1px solid #86efac;border-radius:999px;font-size:11px;font-weight:800;color:#15803d">📶 ${getRecommendationText(wlanRecommendation)}</span>` : '', speedRecommendation ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:#dcfce7;border:1px solid #86efac;border-radius:999px;font-size:11px;font-weight:800;color:#15803d">⚡ ${speedRecommendation}</span>` : ''].filter(Boolean).join('');
+    const recItemsHtml = [wlanRecommendation ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:#dcfce7;border:1px solid #86efac;border-radius:999px;font-size:11px;font-weight:800;color:#15803d">📶 ${getRecDisplayText(wlanRecommendation)}</span>` : '', speedRecommendation ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:#dcfce7;border:1px solid #86efac;border-radius:999px;font-size:11px;font-weight:800;color:#15803d">⚡ ${getRecDisplayText(speedRecommendation)}</span>` : ''].filter(Boolean).join('');
     const recBannerHtml = recItemsHtml ? `<div class="page3-rec-banner" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;margin:10px 24px 0;padding:8px 14px;background:#f0fdf4;border:1.5px solid #86efac;border-radius:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:10px;font-weight:900;color:#166534;text-transform:uppercase;letter-spacing:0.08em">✓ ${getStaticLabel('RecommendationsLabel')}:</span>${recItemsHtml}</div>` : '';
     const cards = [wlanCardHtml, techCardHtml, nbCardHtml, tvCardHtml].filter(Boolean);
     const gridCols = cards.length === 4 ? '1fr 1fr 1fr 1fr' : cards.length === 3 ? '1fr 1fr 1fr' : cards.length === 2 ? '1fr 1fr' : '1fr';
@@ -32132,7 +32424,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       fontWeight: 700,
       color: '#166534'
     }
-  }, "✓ ", wlanRecommendation), showProviderKeyboard && ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
+  }, "✓ ", getRecDisplayText(wlanRecommendation)), showProviderKeyboard && ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
       inset: 0,
@@ -32550,7 +32842,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       fontWeight: 700,
       color: '#166534'
     }
-  }, "✓ ", speedRecommendation))), /*#__PURE__*/React.createElement("div", {
+  }, "✓ ", getRecDisplayText(speedRecommendation)))), /*#__PURE__*/React.createElement("div", {
     className: "print-hide-roaming",
     style: {
       background: '#ffffff',
@@ -34090,7 +34382,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     y1: "20",
     x2: "12.01",
     y2: "20"
-  })), getRecommendationText(wlanRecommendation)), speedRecommendation && /*#__PURE__*/React.createElement("span", {
+  })), getRecDisplayText(wlanRecommendation)), speedRecommendation && /*#__PURE__*/React.createElement("span", {
     style: {
       display: 'inline-flex',
       alignItems: 'center',
@@ -34113,7 +34405,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     strokeLinecap: "round"
   }, /*#__PURE__*/React.createElement("path", {
     d: "M13 2L3 14h9l-1 8 10-12h-9l1-8z"
-  })), speedRecommendation)), /*#__PURE__*/React.createElement("div", {
+  })), getRecDisplayText(speedRecommendation))), /*#__PURE__*/React.createElement("div", {
     className: "bg-white p-6 rounded-2xl border border-slate-200 shadow-xl shrink-0 cost-overview-print",
     style: offerLayoutMode === 'step' && currentOfferStep !== 3 ? {
       display: 'none'
