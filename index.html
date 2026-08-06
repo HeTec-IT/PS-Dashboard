@@ -74,14 +74,16 @@
     })();
     </script>
 
-    <!-- ===== INSTALLATIONSMODUS: Android/Windows = PWA, Apple = Verknuepfung ===== -->
+    <!-- ===== INSTALLATIONSMODUS: Android/Windows = PWA, Apple = Vollbild-Verknuepfung ===== -->
     <!--
-      WICHTIG:
+      WICHTIG (seit v55.5.0):
       - Android/Windows/Desktop erhalten das echte manifest.webmanifest + Service Worker.
-      - iPhone/iPad erhalten ABSICHTLICH kein Manifest und kein "web-app-capable".
-        "Zum Home-Bildschirm" speichert dadurch die aktuell geoeffnete, vollstaendige
-        URL inklusive ?agent=..., ?shop=..., ?brand=... und ?shopwechsel=....
-        Die Verknuepfung oeffnet normal im Browser statt als separate Apple-Web-App.
+      - iPhone/iPad erhalten NUR "apple-mobile-web-app-capable" (KEIN <link rel="manifest">,
+        KEIN Service Worker). Dadurch startet "Zum Home-Bildschirm" im Vollbild ohne
+        Safari-Leiste – und iOS speichert trotzdem weiterhin die exakt geoeffnete,
+        vollstaendige URL inklusive ?agent=..., ?shop=..., ?brand=... und ?shopwechsel=...,
+        weil ohne manifest.webmanifest kein "start_url" existiert, auf den iOS sonst
+        beim Oeffnen von der Verknuepfung zurueckspringen wuerde.
     -->
     <meta name="apple-mobile-web-app-title" content="Pencil o2">
     <meta name="application-name" content="Pencil o2">
@@ -101,9 +103,21 @@
         );
 
         if (isAppleMobile) {
-            // Kein Manifest + kein App-Capable-Meta auf Apple:
-            // iOS/iPadOS speichert beim Hinzufuegen zum Home-Bildschirm exakt
-            // window.location.href und damit den personalisierten Link.
+            // v55.5.0: NUR das capable-Meta setzen, KEIN <link rel="manifest">.
+            // So startet "Zum Home-Bildschirm" im Vollbild (ohne Safari-Leiste),
+            // aber iOS/iPadOS speichert trotzdem exakt window.location.href als
+            // Ziel-URL, weil ohne manifest.webmanifest kein start_url existiert,
+            // auf den iOS sonst zurueckspringen wuerde.
+            var appleCapable = document.createElement('meta');
+            appleCapable.name = 'apple-mobile-web-app-capable';
+            appleCapable.content = 'yes';
+            document.head.appendChild(appleCapable);
+
+            var appleStatusBar = document.createElement('meta');
+            appleStatusBar.name = 'apple-mobile-web-app-status-bar-style';
+            appleStatusBar.content = 'black-translucent';
+            document.head.appendChild(appleStatusBar);
+
             window.__PENCIL_SHORTCUT_URL = window.location.href;
 
             // Falls zuvor die alte PWA-Version auf diesem Pfad geoeffnet wurde,
@@ -189,7 +203,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.3.0';
+    window.APP_VERSION = '55.5.0';
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -36726,6 +36740,12 @@ function __psRenderAuth(mode, prefill) {
 
   if (isRegister) {
     document.getElementById('ps-gate-submit').onclick = function () {
+      var btn = document.getElementById('ps-gate-submit');
+      // v55.4.0: Schutz gegen Doppel-Klick/-Tap – ohne diesen Guard feuerte
+      // ein zweiter Klick während der ersten Anfrage noch läuft eine zweite
+      // createUserWithEmailAndPassword-Anfrage; das erste Konto wurde echt
+      // angelegt, das zweite schlug mit "E-Mail bereits verwendet" fehl.
+      if (btn.disabled) return;
       var anrede = document.getElementById('ps-gate-anrede').value;
       var vorname = document.getElementById('ps-gate-vorname').value.trim();
       var nachname = document.getElementById('ps-gate-nachname').value.trim();
@@ -36738,6 +36758,10 @@ function __psRenderAuth(mode, prefill) {
       var displayName = vorname ? (vorname + ' ' + nachname).trim() : nachname;
       var auth = __psGetAuth();
       var createdUser = null;
+      var btnLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Erstelle Konto…';
+      function __psResetSubmitBtn(){ btn.disabled = false; btn.textContent = btnLabel; }
       auth.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL).then(function () {
         return auth.createUserWithEmailAndPassword(email, pw);
       }).then(function (cred) {
@@ -36767,7 +36791,10 @@ function __psRenderAuth(mode, prefill) {
             console.warn('Bestätigungsmail konnte nicht sofort gesendet werden:', mailError);
           });
         });
+      }).then(function () {
+        __psResetSubmitBtn();
       }).catch(function (e) {
+        __psResetSubmitBtn();
         __psShowError('Fehler: ' + (e && e.message || e));
       });
     };
