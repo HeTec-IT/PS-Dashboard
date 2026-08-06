@@ -189,7 +189,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '54.5.0';
+    window.APP_VERSION = '55.3.0';
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -11564,11 +11564,13 @@ const TvPriceModal = ({
   // v54.2.0: Vergleich – bis zu 3 Pakete anbieterübergreifend anpinnen (Lang-Druck auf Paket)
   const [pinned, setPinned] = useState([]);
   const [pinLimitHint, setPinLimitHint] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
   const longPressTimer = React.useRef(null);
   const pinFiredRef = React.useRef(false);
   const startLongPress = entry => {
     pinFiredRef.current = false;
     clearTimeout(longPressTimer.current);
+    const alreadyPinned = pinned.some(p => p.id === entry.id);
     longPressTimer.current = setTimeout(() => {
       pinFiredRef.current = true;
       setPinned(prev => {
@@ -11578,8 +11580,13 @@ const TvPriceModal = ({
           setTimeout(() => setPinLimitHint(false), 1600);
           return prev;
         }
-        return [...prev, entry];
+        const next = [...prev, entry];
+        if (next.length >= 2) setCompareMode(true);
+        return next;
       });
+      // Aktiv-Markierung an das (ent)pinnte Paket anpassen, sonst zeigt die
+      // Zusammenfassung unten den Preis eines inzwischen ausgeblendeten Pakets.
+      setSelectedCol(alreadyPinned ? null : entry.packageId);
     }, 480);
   };
   const cancelLongPress = () => clearTimeout(longPressTimer.current);
@@ -11839,6 +11846,11 @@ const TvPriceModal = ({
   const recCol = pd.cols.find(c => c.id === activeCol);
   const ersparnis = prevTotal > 0 ? prevTotal - recTotal : null;
   const hasCustom = Object.keys(customPrices).some(k => k.startsWith(provider + '_'));
+  // v54.6.0: Ist für DIESEN Anbieter schon ein Paket angepinnt, nur dieses zeigen –
+  // die übrigen Pakete des Anbieters verschwinden, bis der Pin wieder entfernt wird.
+  const pinnedHere = pinned.find(p => p.provider === provider);
+  const pinnedFiltered = pinnedHere ? pd.cols.filter(c => provider + '_' + c.id === pinnedHere.id) : pd.cols;
+  const visibleCols = pinnedFiltered.length > 0 ? pinnedFiltered : pd.cols;
   const providers = [{
     id: 'o2',
     label: 'o2 TV',
@@ -11926,7 +11938,7 @@ const TvPriceModal = ({
     style: {
       color: '#7c3aed'
     }
-  }, "Lang drücken auf Paket = für Vergleich merken")))), /*#__PURE__*/React.createElement("div", {
+  }, "Lang drücken auf Paket = für Vergleich merken"), " (blendet andere Pakete des Anbieters aus)"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -11961,7 +11973,7 @@ const TvPriceModal = ({
   }, /*#__PURE__*/React.createElement(Icon, {
     d: ICONS.X,
     size: 16
-  })))), /*#__PURE__*/React.createElement("div", {
+  })))), !compareMode && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: '4px',
@@ -11974,7 +11986,8 @@ const TvPriceModal = ({
     key: p.id,
     onClick: () => {
       setProvider(p.id);
-      setSelectedCol(null);
+      const pinnedForP = pinned.find(x => x.provider === p.id);
+      setSelectedCol(pinnedForP ? pinnedForP.packageId : null);
     },
     style: {
       padding: '8px 20px',
@@ -11990,170 +12003,64 @@ const TvPriceModal = ({
       borderTop: provider === p.id ? '2px solid ' + p.color : '2px solid transparent',
       outline: 'none'
     }
-  }, p.label))), pinned.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, p.label))), !compareMode && pinned.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      alignItems: 'flex-start',
-      gap: '8px',
-      padding: '10px 24px',
+      alignItems: 'center',
+      gap: '10px',
+      padding: '8px 24px',
       background: '#faf5ff',
       borderBottom: '1px solid #f1f5f9',
-      flexWrap: 'wrap',
       flexShrink: 0
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: '10px',
-      fontWeight: 800,
-      color: '#7c3aed',
-      textTransform: 'uppercase',
-      letterSpacing: '0.06em',
-      paddingTop: '6px'
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px'
     }
-  }, "Vergleich (", pinned.length, "/3)"), pinLimitHint && /*#__PURE__*/React.createElement("span", {
+  }, pinned.map(p => /*#__PURE__*/React.createElement("span", {
+    key: p.id,
+    title: p.providerLabel + ' – ' + p.packageLabel,
+    style: {
+      width: '22px',
+      height: '22px',
+      borderRadius: '50%',
+      background: p.providerColor,
+      color: '#fff',
+      fontSize: '10px',
+      fontWeight: 900,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0
+    }
+  }, p.providerLabel[0]))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: '11px',
+      fontWeight: 700,
+      color: '#7c3aed'
+    }
+  }, pinned.length, pinned.length === 1 ? ' Paket vorgemerkt' : ' Pakete vorgemerkt'), pinLimitHint && /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: '10px',
       fontWeight: 700,
-      color: '#dc2626',
-      paddingTop: '6px'
+      color: '#dc2626'
     }
-  }, "Max. 3 – erst einen entfernen"), pinned.map(p => {
-    const featureList = (p.features || []).slice(0, 5);
-    return /*#__PURE__*/React.createElement("div", {
-      key: p.id,
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '3px',
-        background: '#ffffff',
-        border: '1.5px solid ' + p.providerColor,
-        borderRadius: '12px',
-        padding: '7px 10px 8px',
-        minWidth: '168px',
-        maxWidth: '230px'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: '6px'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '5px',
-        minWidth: 0
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        width: '7px',
-        height: '7px',
-        borderRadius: '50%',
-        background: p.providerColor,
-        flexShrink: 0
-      }
-    }), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: '9px',
-        fontWeight: 800,
-        color: p.providerColor,
-        textTransform: 'uppercase',
-        letterSpacing: '0.04em',
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis'
-      }
-    }, p.providerLabel)), /*#__PURE__*/React.createElement("button", {
-      onClick: () => setPinned(prev => prev.filter(x => x.id !== p.id)),
-      title: "Entfernen",
-      style: {
-        width: '16px',
-        height: '16px',
-        borderRadius: '4px',
-        border: 'none',
-        background: '#f1f5f9',
-        color: '#64748b',
-        fontSize: '11px',
-        fontWeight: 900,
-        cursor: 'pointer',
-        lineHeight: 1,
-        flexShrink: 0
-      }
-    }, "×")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: '12px',
-        fontWeight: 900,
-        color: '#1e293b',
-        lineHeight: 1.25
-      }
-    }, p.packageLabel, p.packageSub ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 600,
-        color: '#94a3b8',
-        fontSize: '10px'
-      }
-    }, " · ", p.packageSub) : null), p.badge ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: '9px',
-        fontWeight: 800,
-        color: p.providerColor
-      }
-    }, p.badge) : null, featureList.length > 0 ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '1px',
-        margin: '3px 0'
-      }
-    }, featureList.map((f, fi) => /*#__PURE__*/React.createElement("div", {
-      key: fi,
-      style: {
-        fontSize: '9.5px',
-        color: '#475569',
-        fontWeight: 600,
-        lineHeight: 1.3
-      }
-    }, "✓ ", f))) : null, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: '6px',
-        marginTop: '2px',
-        paddingTop: '5px',
-        borderTop: '1px solid #f1f5f9'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: '14px',
-        fontWeight: 900,
-        color: p.providerColor
-      }
-    }, p.price.toFixed(2), " €"), /*#__PURE__*/React.createElement("button", {
-      onClick: () => onUebernehmen && onUebernehmen({
-        price: p.price.toFixed(2),
-        provider: p.provider,
-        providerLabel: p.providerLabel,
-        packageLabel: p.packageLabel,
-        packageSub: p.packageSub,
-        color: p.providerColor
-      }),
-      title: "Übernehmen",
-      style: {
-        fontSize: '9px',
-        fontWeight: 800,
-        padding: '4px 8px',
-        borderRadius: '6px',
-        border: 'none',
-        background: p.providerColor,
-        color: '#fff',
-        cursor: 'pointer',
-        whiteSpace: 'nowrap'
-      }
-    }, "✓ übernehmen")));
-  })), /*#__PURE__*/React.createElement("div", {
+  }, "Max. 3 – erst eins entfernen"), pinned.length >= 2 && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setCompareMode(true),
+    style: {
+      marginLeft: 'auto',
+      fontSize: '11px',
+      fontWeight: 800,
+      padding: '6px 14px',
+      borderRadius: '8px',
+      border: 'none',
+      background: '#7c3aed',
+      color: '#fff',
+      cursor: 'pointer'
+    }
+  }, "Vergleichen →")), !compareMode && /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflowY: 'auto',
@@ -12222,7 +12129,7 @@ const TvPriceModal = ({
   }, "✓"), f))))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '180px repeat(' + pd.cols.length + ', 1fr)',
+      gridTemplateColumns: '180px repeat(' + visibleCols.length + ', 1fr)',
       gap: '10px',
       alignItems: 'stretch'
     }
@@ -12312,7 +12219,7 @@ const TvPriceModal = ({
       fontWeight: 900,
       color: '#334155'
     }
-  }, prevTotal > 0 ? prevTotal.toFixed(2) + ' €' : '—'))), pd.cols.map(col => {
+  }, prevTotal > 0 ? prevTotal.toFixed(2) + ' €' : '—'))), visibleCols.map(col => {
     const isActive = col.id === activeCol;
     const pinId = provider + '_' + col.id;
     const isPinned = pinned.some(p => p.id === pinId);
@@ -12330,6 +12237,7 @@ const TvPriceModal = ({
         provider,
         providerLabel: pd.label,
         providerColor: pd.color,
+        packageId: col.id,
         packageLabel: col.label,
         packageSub: col.sub,
         price: dynamicTotals[col.id],
@@ -12664,7 +12572,214 @@ const TvPriceModal = ({
       fontWeight: 600,
       lineHeight: 1.5
     }
-  }, fn)))), /*#__PURE__*/React.createElement("div", {
+  }, fn)))), compareMode && /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      overflowY: 'auto',
+      padding: '20px 24px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '16px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setCompareMode(false),
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+      border: 'none',
+      background: 'transparent',
+      color: '#7c3aed',
+      fontWeight: 800,
+      fontSize: '13px',
+      cursor: 'pointer',
+      padding: '4px 0'
+    }
+  }, "← Zurück zur Auswahl"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setPinned([]);
+      setCompareMode(false);
+    },
+    style: {
+      fontSize: '11px',
+      fontWeight: 700,
+      color: '#94a3b8',
+      background: 'transparent',
+      border: 'none',
+      cursor: 'pointer'
+    }
+  }, "Alle entfernen")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(' + Math.max(pinned.length, 1) + ', 1fr)',
+      gap: '14px',
+      alignItems: 'stretch'
+    }
+  }, pinned.map(p => {
+    const isCheapest = pinned.length > 1 && p.price === Math.min.apply(Math, pinned.map(x => x.price));
+    const featureList = p.features && p.features.length > 0 ? p.features : ['—'];
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: '18px',
+        overflow: 'hidden',
+        border: '2px solid ' + p.providerColor,
+        background: '#ffffff',
+        boxShadow: isCheapest ? '0 10px 28px ' + p.providerColor + '30' : '0 1px 3px rgba(0,0,0,0.06)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: p.providerColor,
+        padding: '16px 16px 14px',
+        position: 'relative'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        const next = pinned.filter(x => x.id !== p.id);
+        setPinned(next);
+        if (next.length < 2) setCompareMode(false);
+      },
+      title: "Entfernen",
+      style: {
+        position: 'absolute',
+        top: '10px',
+        right: '10px',
+        width: '22px',
+        height: '22px',
+        borderRadius: '50%',
+        border: 'none',
+        background: 'rgba(255,255,255,0.25)',
+        color: '#fff',
+        fontSize: '12px',
+        fontWeight: 900,
+        cursor: 'pointer',
+        lineHeight: 1
+      }
+    }, "×"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '10px',
+        fontWeight: 800,
+        color: 'rgba(255,255,255,0.82)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em'
+      }
+    }, p.providerLabel), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '19px',
+        fontWeight: 900,
+        color: '#fff',
+        marginTop: '3px',
+        lineHeight: 1.2,
+        paddingRight: '24px'
+      }
+    }, p.packageLabel), p.packageSub && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: '11px',
+        color: 'rgba(255,255,255,0.85)',
+        fontWeight: 600,
+        marginTop: '2px'
+      }
+    }, p.packageSub), p.badge && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'inline-block',
+        marginTop: '9px',
+        fontSize: '10px',
+        fontWeight: 800,
+        color: p.providerColor,
+        background: '#ffffff',
+        padding: '3px 9px',
+        borderRadius: '999px'
+      }
+    }, p.badge)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '14px 16px',
+        borderBottom: '1px solid #f1f5f9',
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: '6px',
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: '25px',
+        fontWeight: 900,
+        color: '#0b1e42'
+      }
+    }, p.price.toFixed(2), " €"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: '11px',
+        color: '#94a3b8',
+        fontWeight: 600
+      }
+    }, "/ Monat"), isCheapest && /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginLeft: 'auto',
+        fontSize: '10px',
+        fontWeight: 800,
+        color: '#15803d',
+        background: '#dcfce7',
+        padding: '3px 8px',
+        borderRadius: '999px',
+        whiteSpace: 'nowrap'
+      }
+    }, "🏆 günstigster")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '12px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '7px',
+        flex: 1
+      }
+    }, featureList.map((f, fi) => /*#__PURE__*/React.createElement("div", {
+      key: fi,
+      style: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '6px',
+        fontSize: '12px',
+        color: '#334155',
+        fontWeight: 600,
+        lineHeight: 1.35
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: p.providerColor,
+        fontWeight: 900
+      }
+    }, "✓"), f))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '4px 16px 16px'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => onUebernehmen && onUebernehmen({
+        price: p.price.toFixed(2),
+        provider: p.provider,
+        providerLabel: p.providerLabel,
+        packageLabel: p.packageLabel,
+        packageSub: p.packageSub,
+        color: p.providerColor
+      }),
+      style: {
+        width: '100%',
+        padding: '11px',
+        borderRadius: '10px',
+        border: 'none',
+        background: p.providerColor,
+        color: '#fff',
+        fontWeight: 800,
+        fontSize: '13px',
+        cursor: 'pointer'
+      }
+    }, "✓ ", p.price.toFixed(2), " € übernehmen")));
+  }))), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '12px 24px',
       borderTop: '1px solid #f1f5f9',
@@ -16406,6 +16521,34 @@ function strokeHitByEraser(stroke, x, y, radius) {
     if (__psDistToSegment(x, y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) <= pad) return true;
   }
   return false;
+}
+// v55.1.0: Radieren wie auf Papier – nur die vom Radiergummi tatsächlich
+// getroffenen Punkte werden entfernt, nicht der ganze Strich. Ein einmaliges
+// Antippen löscht also nicht mehr alles; man muss wirklich über den Strich
+// ziehen, bis er komplett weg ist. Rückgabe: null = nichts getroffen (Strich
+// bleibt wie er ist), Array = Ersatz für den Strich (ggf. leer = komplett weg,
+// oder mehrere Teilstücke, wenn mittendrin radiert wurde).
+function eraseStrokeAt(stroke, x, y, radius) {
+  if (!stroke || !stroke.points || stroke.points.length === 0) return null;
+  const pad = radius + (stroke.baseLineWidth != null ? stroke.baseLineWidth / 2 : (stroke.width || 2) / 2);
+  const pts = stroke.points;
+  let anyHit = false;
+  const segments = [];
+  let current = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (Math.hypot(pts[i].x - x, pts[i].y - y) <= pad) {
+      anyHit = true;
+      if (current.length >= 2) segments.push(current);
+      current = [];
+    } else {
+      current.push(pts[i]);
+    }
+  }
+  if (!anyHit) return null;
+  if (current.length >= 2) segments.push(current);
+  return segments.map(segPts => Object.assign({}, stroke, {
+    points: segPts
+  }));
 }
 function forceRedrawCanvas(canvas, strokes, scaleFactor, key) {
   // Wie redrawCanvas, ignoriert aber kurzzeitig die __activeDrawingCanvas-Sperre,
@@ -23487,11 +23630,16 @@ function App() {
 
     // GestureMode: Touch soll zoomen/pannen dürfen
     if (gestureModeRef.current && pointerType === 'touch') {
+      // v55.3.0: Falls gerade ein Marker-Strich lief, Vorschau-Ebene sauber ausblenden –
+      // sonst bleibt sie unsichtbar "aktiv" hängen und der nächste Redraw zeigt den
+      // schon fertigen Strich kurz mit falscher Deckkraft (bis was anderes aufräumt).
+      if (isDrawingRef.current) hideMarkerPreview();
       isDrawingRef.current = false;
       currentStrokeRef.current = null;
       return;
     }
     if (pointerType === 'touch' && (st.count >= 2 || globalTouchCountRef.current >= 2)) {
+      if (isDrawingRef.current) hideMarkerPreview();
       isDrawingRef.current = false;
       currentStrokeRef.current = null;
       canvas.style.touchAction = 'pan-x pan-y pinch-zoom';
@@ -23557,8 +23705,9 @@ function App() {
       for (let i = working.length - 1; i >= 0; i--) {
         const s = working[i];
         if (!s || s.tool === 'eraser') continue;
-        if (strokeHitByEraser(s, x, y, eraserRadius)) {
-          working.splice(i, 1);
+        const erased = eraseStrokeAt(s, x, y, eraserRadius);
+        if (erased) {
+          working.splice(i, 1, ...erased);
           changed = true;
         }
       }
@@ -23697,8 +23846,9 @@ function App() {
           for (let i = session.working.length - 1; i >= 0; i--) {
             const st2 = session.working[i];
             if (!st2 || st2.tool === 'eraser') continue;
-            if (strokeHitByEraser(st2, ix, iy, session.radius)) {
-              session.working.splice(i, 1);
+            const erased = eraseStrokeAt(st2, ix, iy, session.radius);
+            if (erased) {
+              session.working.splice(i, 1, ...erased);
               changed = true;
             }
           }
@@ -23879,7 +24029,13 @@ function App() {
       }
     }
     // v46.2: Textmarker auf der Vorschau-Ebene aktualisieren (voll deckend, CSS-opacity).
+    // v55.2.0: Position/Größe der Vorschau-Ebene bei jedem Frame neu mit dem Ziel-Canvas
+    // abgleichen, nicht nur einmal beim Antippen. Sonst kann der erste Strich nach dem
+    // Ansetzen an der falschen Stelle erscheinen, wenn sich das Layout zwischen Antippen
+    // und dem ersten Frame noch verschoben hat. renderMarkerPreview zeichnet danach ohnehin
+    // den kompletten bisherigen Pfad neu, es geht also nichts verloren.
     if (currentTool === 'highlighter') {
+      positionMarkerPreview(canvas, stroke.opacity);
       renderMarkerPreview(stroke);
     }
   }, []);
