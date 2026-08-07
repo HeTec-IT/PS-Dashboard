@@ -203,7 +203,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.7.0';
+    window.APP_VERSION = '55.8.0';
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -35703,7 +35703,36 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     }
   }, "K")))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-2"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "relative"
   }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowLanguageDropdown(p => !p),
+    className: "flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200 shadow-sm hover:bg-slate-100 transition-colors",
+    title: `Sprache: ${SORTED_LANGUAGES.find(l => l.code === displayLanguage)?.name || 'Deutsch'}`
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "relative flex items-center justify-center"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    d: ICONS.Globe,
+    size: 18,
+    className: "text-slate-500"
+  }), displayLanguage !== 'de' && /*#__PURE__*/React.createElement("span", {
+    className: "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-black text-white mix-blend-difference leading-none pointer-events-none"
+  }, displayLanguage.toUpperCase()))), showLanguageDropdown && /*#__PURE__*/React.createElement("div", {
+    className: "absolute bottom-full right-0 mb-2 w-48 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "p-2 border-b border-slate-100 text-xs font-bold text-slate-500 uppercase"
+  }, "Sprache wählen"), SORTED_LANGUAGES.map(lang => /*#__PURE__*/React.createElement("button", {
+    key: lang.code,
+    onClick: () => {
+      setDisplayLanguage(lang.code);
+      setShowLanguageDropdown(false);
+    },
+    className: `w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2 ${displayLanguage === lang.code ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-100'}`
+  }, lang.name, displayLanguage === lang.code && /*#__PURE__*/React.createElement(Icon, {
+    d: ICONS.CheckCircle,
+    size: 14,
+    className: "ml-auto"
+  }))))), /*#__PURE__*/React.createElement("button", {
     onClick: handleSaveButtonClick,
     disabled: offerSaving,
     className: "p-2 bg-white rounded-lg border border-slate-200 shadow-sm text-emerald-500 hover:bg-emerald-50 transition-colors",
