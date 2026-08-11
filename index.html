@@ -20090,6 +20090,29 @@ function App() {
     rufModalResolveRef.current = resolve;
     setRufModalOpen(true);
   });
+  // v59-fix: Folgetermin-Dialog als awaitbares Promise (wie askRufOrPark),
+  // damit er sich sauber in die Kette Rufnummer/Parken -> Folgetermin ->
+  // Teilen/Archivieren einreiht, statt per eigenem Timer parallel dazu zu laufen.
+  const folgeterminResolveRef = useRef(null);
+  const askFolgetermin = () => new Promise(resolve => {
+    folgeterminResolveRef.current = resolve;
+    setShowFolgeterminModal(true);
+  });
+  // Prueft, ob noch ein Angebot offen ist -> dann ist ein Folgetermin sinnvoll.
+  // v59-fix: auf Komponentenebene statt lokal in handleSignatureSave, damit
+  // handleFinishOfferClick (Fertigstellen nach bereits vorhandener
+  // Unterschrift) dieselbe Pruefung nutzen kann.
+  const checkHasOpenOffer = () => {
+    try {
+      const keys = ['offer1', 'offer2', 'offer3'];
+      return keys.some(k => {
+        const hasContent = !!String(getDisplayText(k) || '').trim() || !!(drawnStrokes && drawnStrokes[k] && drawnStrokes[k].length) || !!(canvasImages && canvasImages[k]) || !!(k === 'offer1' ? window.__canvasHtmlOffer1 : k === 'offer2' ? window.__canvasHtmlOffer2 : window.__canvasHtmlOffer3);
+        return hasContent && (canvasStatus && canvasStatus[k]) === 'open';
+      });
+    } catch (e) {
+      return false;
+    }
+  };
 
   // ── v58: News-Ticker (orange Leiste oben) ──
   // Wegklicken gilt nur für diese Sitzung – nach dem nächsten Refresh
@@ -22497,6 +22520,14 @@ function App() {
               // Parken fehlgeschlagen: Vorgang geöffnet lassen und nichts löschen.
               return;
             }
+            // v59-fix: Folgetermin auch auf DIESEM Weg abfragen (Fertigstellen
+            // nach bereits vorhandener Unterschrift, z.B. nach dem "Angebot
+            // abschließen?"-Prompt). Vorher wurde hier IMMER direkt zu
+            // ReferralModal/"Jetzt teilen" durchgereicht, ohne je zu prüfen,
+            // ob noch ein Angebot offen war - Folgetermin kam dann nie.
+            if (checkHasOpenOffer()) {
+              await askFolgetermin();
+            }
             if (!runOnlyWithOfferValidity(() => setShowReferralModal(true))) return;
             // Genau ein Kunden-PDF: Das 2-Schritte-Fenster öffnet sofort und
             // sein bestehender Vorab-Renderer erzeugt den Blob einmalig. Erst der
@@ -22622,7 +22653,7 @@ function App() {
       return;
     }
   };
-  const handleSignatureSave = dataUrl => {
+  const handleSignatureSave = async dataUrl => {
     const isRealDigitalSig = dataUrl && dataUrl !== 'PAPER_SIGNATURE';
     if (isRealDigitalSig) {
       setCustomerSignature(dataUrl);
@@ -22637,90 +22668,105 @@ function App() {
     // Einfachster Zeitpunkt: sobald unterschrieben ist, kommt sofort das Nummer-Popup.
     // Nur bei echter digitaler Unterschrift (= Abschluss). Ergebnis in sharedMsisdnRef,
     // damit später (Druck/Archiv) nicht erneut gefragt wird.
+    // v59-fix: Laeuft jetzt SEQUENZIELL (await) statt als "fire and forget"
+    // async IIFE. Vorher lief dieser Block PARALLEL zum Folgetermin-Timer
+    // weiter unten: Beim "Parken" kam dadurch kurz danach automatisch das
+    // "Jetzt teilen"-Fenster (hoeherer z-index) über einen noch offenen,
+    // unbeantworteten Folgetermin-Dialog - und direkt im Anschluss wurde
+    // alles archiviert, geschlossen und neu gestartet, egal ob Folgetermin
+    // oder das Teilen-Fenster selbst ueberhaupt bestaetigt wurden.
+    let parkedNow = false;
     if (isRealDigitalSig) {
-      (async () => {
-        let vorhanden = '';
+      let vorhanden = '';
+      try {
+        vorhanden = sharedMsisdnRef.current || (textData?.Rufnummer || '').replace(/[^0-9+]/g, '').trim();
+      } catch (e) {}
+      // v53p: Bei bewusst gewaehltem "Vertrag Parken" wird IMMER
+      // geparkt – auch wenn zufaellig schon eine Nummer im
+      // Formular steht. Der Verkaeufer hat sich dafuer entschieden.
+      const _willParken = !!parkAbsichtRef.current;
+      if (!vorhanden || _willParken) {
         try {
-          vorhanden = sharedMsisdnRef.current || (textData?.Rufnummer || '').replace(/[^0-9+]/g, '').trim();
-        } catch (e) {}
-        // v53p: Bei bewusst gewaehltem "Vertrag Parken" wird IMMER
-        // geparkt – auch wenn zufaellig schon eine Nummer im
-        // Formular steht. Der Verkaeufer hat sich dafuer entschieden.
-        const _willParken = !!parkAbsichtRef.current;
-        if (!vorhanden || _willParken) {
-          try {
-            // v53q: Nur wenn "Vertrag Parken" gewaehlt wurde, ist
-            // Parken hier eine Option. Bei "Abschluss und
-            // Unterschrift" wird die Nummer verlangt – dafuer
-            // gibt es die eigene Park-Karte.
-            const decision = await askRufOrPark(_willParken, _willParken);
-            if (decision.action === 'ok' && decision.value) {
-              const clean = decision.value.replace(/[^0-9+]/g, '').trim();
-              if (clean) sharedMsisdnRef.current = clean;
-            } else if (decision.action === 'park') {
-              // Sofort parken: PDF erzeugen + 24h lokal ablegen, Vorgang beenden
+          // v53q: Nur wenn "Vertrag Parken" gewaehlt wurde, ist
+          // Parken hier eine Option. Bei "Abschluss und
+          // Unterschrift" wird die Nummer verlangt – dafuer
+          // gibt es die eigene Park-Karte.
+          const decision = await askRufOrPark(_willParken, _willParken);
+          if (decision.action === 'ok' && decision.value) {
+            const clean = decision.value.replace(/[^0-9+]/g, '').trim();
+            if (clean) sharedMsisdnRef.current = clean;
+          } else if (decision.action === 'park') {
+            parkedNow = true;
+            // Sofort parken: PDF erzeugen + 24h lokal ablegen, Vorgang beenden
+            try {
+              const _datum = new Date().toISOString().slice(0, 10);
+              const _agent = (() => {
+                try {
+                  const a = getAgentDisplayNameForUpload();
+                  return a === '–' ? '' : a;
+                } catch (e) {
+                  return '';
+                }
+              })();
+              const { kundenBlob, archivBlob } = await createParkPdfPair();
+              const parkedOk = await parkArchiveEntry({
+                id: 'park_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                ts: Date.now(),
+                type: 'abschluss',
+                agent: _agent,
+                datum: _datum,
+                kunde: (decision?.kunde || sharedKundeRef.current || textData?.Kundenname || '').toString().trim(),
+                // v53i: Park-Dialog-Name zuerst
+                dateiname: buildArchivDateiname('abschluss', _datum, ''),
+                pdfBlob: archivBlob
+              });
+              if (!parkedOk) throw new Error('Lokaler Park-Speicher nicht verfügbar');
+              archiveSentRef.current = true;
               try {
-                const _datum = new Date().toISOString().slice(0, 10);
-                const _agent = (() => {
-                  try {
-                    const a = getAgentDisplayNameForUpload();
-                    return a === '–' ? '' : a;
-                  } catch (e) {
-                    return '';
-                  }
-                })();
-                const { kundenBlob, archivBlob } = await createParkPdfPair();
-                const parkedOk = await parkArchiveEntry({
-                  id: 'park_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-                  ts: Date.now(),
-                  type: 'abschluss',
-                  agent: _agent,
-                  datum: _datum,
-                  kunde: (decision?.kunde || sharedKundeRef.current || textData?.Kundenname || '').toString().trim(),
-                  // v53i: Park-Dialog-Name zuerst
-                  dateiname: buildArchivDateiname('abschluss', _datum, ''),
-                  pdfBlob: archivBlob
-                });
-                if (!parkedOk) throw new Error('Lokaler Park-Speicher nicht verfügbar');
-                archiveSentRef.current = true;
-                try {
-                  triggerToast('🅿️ Geparkt – 24h über das Archiv-Symbol abrufbar.');
-                } catch (e) {}
-                try {
-                  refreshParkedCount();
-                } catch (e) {}
-                // v53k: Kunde bekommt seine Ausfertigung TROTZDEM –
-                // und zwar VOR dem Neustart. Der Reload kommt erst,
-                // wenn das Teilen-Fenster geschlossen ist (Windows-
-                // Lektion: nie neu laden, solange geteilt wird).
-                // v53l: DIREKT teilen – kein Zwischenfenster.
-                try {
-                  await kundenPdfDirektTeilen(kundenBlob, openShareSheet);
-                } catch (e) {}
-                try {
-                  handleClearAll();
-                } catch (e) {}
-                try {
-                  clearAutosave();
-                } catch (e) {}
-                // v53k: Reload erst, wenn der (System-)Teilen-Dialog
-                // wirklich zu ist – Windows resolved schon beim Oeffnen.
-                nachTeilenAusfuehren(() => {
-                  try {
-                    window.__psIntentionalReload = true;
-                    window.location.reload();
-                  } catch (e) {}
-                });
-              } catch (e) {
-                try {
-                  triggerToast('Parken fehlgeschlagen – bitte Nummer eingeben.');
-                } catch (_) {}
+                triggerToast('🅿️ Geparkt – 24h über das Archiv-Symbol abrufbar.');
+              } catch (e) {}
+              try {
+                refreshParkedCount();
+              } catch (e) {}
+              // v59-fix: ERST Folgetermin klaeren, falls ein Angebot noch
+              // offen ist - solange der Vorgang noch existiert. Erst danach
+              // wird geteilt, archiviert und neu gestartet.
+              if (checkHasOpenOffer()) {
+                await askFolgetermin();
               }
+              // v53k: Kunde bekommt seine Ausfertigung TROTZDEM –
+              // und zwar VOR dem Neustart. Der Reload kommt erst,
+              // wenn das Teilen-Fenster geschlossen ist (Windows-
+              // Lektion: nie neu laden, solange geteilt wird).
+              // v53l: DIREKT teilen – kein Zwischenfenster.
+              try {
+                await kundenPdfDirektTeilen(kundenBlob, openShareSheet);
+              } catch (e) {}
+              try {
+                handleClearAll();
+              } catch (e) {}
+              try {
+                clearAutosave();
+              } catch (e) {}
+              // v53k: Reload erst, wenn der (System-)Teilen-Dialog
+              // wirklich zu ist – Windows resolved schon beim Oeffnen.
+              nachTeilenAusfuehren(() => {
+                try {
+                  window.__psIntentionalReload = true;
+                  window.location.reload();
+                } catch (e) {}
+              });
+            } catch (e) {
+              parkedNow = false;
+              try {
+                triggerToast('Parken fehlgeschlagen – bitte Nummer eingeben.');
+              } catch (_) {}
             }
-          } catch (e) {}
-        }
-      })();
+          }
+        } catch (e) {}
+      }
     }
+    if (parkedNow) return; // Vorgang wurde oben bereits vollstaendig abgeschlossen (Folgetermin, Teilen, Archiv, Neustart).
 
     // KERN-FIX: Nach Restore wurden Strokes in 0px-Canvas gezeichnet (unsichtbar).
     // Jetzt sind Canvas-Elemente sicher sichtbar — gestaffelte Redraws erzwingen.
@@ -22829,20 +22875,15 @@ function App() {
     }
 
     // Prüfen ob ein Angebot noch offen ist → Folgetermin-Dialog zeigen
-    const _hasOpenOffer = (() => {
-      try {
-        const keys = ['offer1', 'offer2', 'offer3'];
-        return keys.some(k => {
-          const hasContent = !!String(getDisplayText(k) || '').trim() || !!(drawnStrokes && drawnStrokes[k] && drawnStrokes[k].length) || !!(canvasImages && canvasImages[k]) || !!(k === 'offer1' ? window.__canvasHtmlOffer1 : k === 'offer2' ? window.__canvasHtmlOffer2 : window.__canvasHtmlOffer3);
-          return hasContent && (canvasStatus && canvasStatus[k]) === 'open';
-        });
-      } catch (e) {
-        return false;
-      }
-    })();
-    if (_hasOpenOffer) {
-      // Erst Folgetermin, dann ReferralModal
-      setTimeout(() => setShowFolgeterminModal(true), 300);
+    // v59-fix: await statt paralleler setTimeout-Kette - Folgetermin wird
+    // jetzt IMMER zuerst fertig bearbeitet, bevor das ReferralModal
+    // ("Jetzt teilen") folgt.
+    if (checkHasOpenOffer()) {
+      // Erst Folgetermin (mit der bisherigen kurzen Verzoegerung fuers
+      // Modal-Timing), DANN erst ReferralModal.
+      await new Promise(res => setTimeout(res, 300));
+      await askFolgetermin();
+      setTimeout(() => setShowReferralModal(true), 300);
     } else {
       setTimeout(() => setShowReferralModal(true), 300);
     }
@@ -29647,7 +29688,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     isOpen: showFolgeterminModal,
     onClose: () => {
       setShowFolgeterminModal(false);
-      setTimeout(() => setShowReferralModal(true), 200);
+      const _folgeResolve = folgeterminResolveRef.current;
+      folgeterminResolveRef.current = null;
+      if (_folgeResolve) _folgeResolve({ skipped: true });
     },
     onConfirm: result => {
       setShowFolgeterminModal(false);
@@ -29663,7 +29706,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         }) + (result.time ? ' um ' + result.time + ' Uhr' : '');
         triggerToast('📅 Folgetermin: ' + fmt);
       }
-      setTimeout(() => setShowReferralModal(true), 300);
+      const _folgeResolve = folgeterminResolveRef.current;
+      folgeterminResolveRef.current = null;
+      if (_folgeResolve) _folgeResolve(result);
     }
   }), /*#__PURE__*/React.createElement("header", {
     className: "bg-white px-4 py-2 border-b border-slate-200 flex items-center gap-3 shrink-0 shadow-sm z-30 relative h-16 w-full"
