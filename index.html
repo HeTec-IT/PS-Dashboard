@@ -6776,6 +6776,7 @@ const FolgeterminModal = ({
   const [date, setDate] = React.useState('');
   const [time, setTime] = React.useState('');
   const [noAppointment, setNoAppointment] = React.useState(false);
+  const [email, setEmail] = React.useState('');
   return /*#__PURE__*/React.createElement("div", {
     className: "fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4 animate-in fade-in"
   }, /*#__PURE__*/React.createElement("div", {
@@ -6882,7 +6883,40 @@ const FolgeterminModal = ({
     },
     onFocus: e => e.target.style.borderColor = '#3b82f6',
     onBlur: e => e.target.style.borderColor = '#e2e8f0'
-  })))), /*#__PURE__*/React.createElement("button", {
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: '2px'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: '10px',
+      fontWeight: 800,
+      color: '#64748b',
+      textTransform: 'uppercase',
+      letterSpacing: '0.06em',
+      display: 'block',
+      marginBottom: '6px'
+    }
+  }, "E-Mail des Kunden (optional)"), /*#__PURE__*/React.createElement("input", {
+    type: "email",
+    value: email,
+    onChange: e => setEmail(e.target.value),
+    placeholder: "kunde@beispiel.de",
+    style: {
+      width: '100%',
+      padding: '10px 12px',
+      borderRadius: '10px',
+      border: '1.5px solid #e2e8f0',
+      fontSize: '14px',
+      fontWeight: 700,
+      color: '#0f172a',
+      background: '#f8fafc',
+      boxSizing: 'border-box',
+      outline: 'none'
+    },
+    onFocus: e => e.target.style.borderColor = '#3b82f6',
+    onBlur: e => e.target.style.borderColor = '#e2e8f0'
+  }))), /*#__PURE__*/React.createElement("button", {
     onClick: () => setNoAppointment(p => !p),
     style: {
       display: 'flex',
@@ -6927,6 +6961,7 @@ const FolgeterminModal = ({
     onClick: () => onConfirm({
       date,
       time,
+      email,
       noAppointment
     }),
     disabled: !noAppointment && !date,
@@ -19389,6 +19424,13 @@ function App() {
   // ══════════════════════════════════════════════════════════════════════
   const ARCHIVE_FLOW_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/30/workflows/6e4980d3dcb74b89bec5b9d88d14e5eb/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kMXS4jANnAUzpeQ_UtVZvcKuE4OPaBIwj00elhHAZkg';
   const ARCHIVE_FLOW_KEY = 'hetec-ps-9f3k';
+  // ═════════════════════════════════════════════════════════
+  // Folgetermin-Flow: eigener Power-Automate-Trigger NUR fuer bestaetigte
+  // Folgetermine (Outlook-Termin fuer den Verkaeufer). Bewusst getrennt von
+  // PA_UPLOAD_URL / ARCHIVE_FLOW_URL - diese bestehenden URLs werden hier
+  // NICHT wiederverwendet oder ueberschrieben.
+  // ═════════════════════════════════════════════════
+  const FOLLOWUP_FLOW_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com/powerautomate/automations/direct/cu/16/workflows/78ada59282fd433e88742db3017301f2/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=wKov_vZB3VBSzdsZ-oAEnt7PS5LCJ4xy9CstE2qF-ME';
   // Archiv-Postfach: hierhin schickt der Mitarbeiter das abgeschlossene Angebot (Power Automate sortiert es weiter)
   const ARCHIV_EMAIL = 'pencil-selling@hetec-gmbh.de';
   // Shopabhängige SharePoint-/OneDrive-Ordner für das Archiv-Popup.
@@ -29705,6 +29747,32 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
           year: 'numeric'
         }) + (result.time ? ' um ' + result.time + ' Uhr' : '');
         triggerToast('📅 Folgetermin: ' + fmt);
+        // Echter Folgetermin (kein noAppointment) -> Power-Automate-Flow ausloesen.
+        // Feuer-und-vergiss: darf den Abschlussprozess niemals blockieren/abbrechen.
+        try {
+          fetch(FOLLOWUP_FLOW_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'text/plain;charset=UTF-8'
+            },
+            body: JSON.stringify({
+              shop: CURRENT_SHOP.ort || '',
+              agent: window.__PS_PROFILE_NAME || LINK_EMPLOYEE || '',
+              kunde: (
+                sharedKundeRef.current ||
+                textData?.Kundenname ||
+                textData?.CustomerName ||
+                ''
+              ).toString().trim(),
+              email: result.email || '',
+              datum: result.date,
+              zeit: result.time || ''
+            })
+          }).catch(err => console.warn('Folgetermin-Flow konnte nicht gesendet werden:', err));
+        } catch (err) {
+          console.warn('Folgetermin-Flow konnte nicht gesendet werden:', err);
+        }
       }
       const _folgeResolve = folgeterminResolveRef.current;
       folgeterminResolveRef.current = null;
