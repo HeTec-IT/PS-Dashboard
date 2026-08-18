@@ -29753,6 +29753,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
           fetch(FOLLOWUP_FLOW_URL, {
             method: 'POST',
             mode: 'no-cors',
+            keepalive: true,
             headers: {
               'Content-Type': 'text/plain;charset=UTF-8'
             },
