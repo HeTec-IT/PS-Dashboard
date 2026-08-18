@@ -6770,13 +6770,18 @@ const FinishTypeModal = ({
 const FolgeterminModal = ({
   isOpen,
   onClose,
-  onConfirm
+  onConfirm,
+  kundenname,
+  defaultEmail
 }) => {
   if (!isOpen) return null;
   const [date, setDate] = React.useState('');
   const [time, setTime] = React.useState('');
   const [noAppointment, setNoAppointment] = React.useState(false);
   const [email, setEmail] = React.useState('');
+  React.useEffect(() => {
+    setEmail(defaultEmail || '');
+  }, [isOpen, defaultEmail]);
   return /*#__PURE__*/React.createElement("div", {
     className: "fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4 animate-in fade-in"
   }, /*#__PURE__*/React.createElement("div", {
@@ -6821,7 +6826,19 @@ const FolgeterminModal = ({
       flexDirection: 'column',
       gap: '14px'
     }
-  }, !noAppointment && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, kundenname && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '12px',
+      fontWeight: 700,
+      color: '#475569',
+      background: '#f1f5f9',
+      borderRadius: '10px',
+      padding: '8px 12px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px'
+    }
+  }, "👤 ", kundenname), !noAppointment && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
@@ -20692,6 +20709,31 @@ function App() {
       return false;
     }
   };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // WERKZEUG-NUTZUNG (Firestore-basiert, gleiches Muster wie Skip-Limit)
+  // Zaehlt pro Mitarbeiter/Monat, wie oft Aktionsmappe, Freunde-werben,
+  // Uebersetzer und Rabattrechner (Gutschrift-Rechner) geoeffnet werden.
+  // Wird bewusst NICHT awaited an den Klickstellen - darf die eigentliche
+  // Aktion (Link oeffnen, Dropdown togglen) nie verzoegern/blockieren.
+  // ═══════════════════════════════════════════════════════════════════
+  const trackToolUsage = async tool => {
+    try {
+      const db = getStatsDb();
+      const agent = window.__PS_PROFILE_NAME || LINK_EMPLOYEE || 'Unbekannt';
+      const docId = `${tool}_${agent}_${getMonthKey()}`;
+      await db.collection('tool_usage').doc(docId).set({
+        agent,
+        tool,
+        month: getMonthKey(),
+        count: firebase.firestore.FieldValue.increment(1),
+        ts: new Date().toISOString()
+      }, { merge: true });
+    } catch (e) {
+      console.error('trackToolUsage:', e);
+    }
+  };
+
   const [isExemptEmployee, setIsExemptEmployee] = React.useState(false);
   React.useEffect(() => {
     (async () => {
@@ -21922,6 +21964,7 @@ function App() {
   }, [triggerToast]);
   const openOneDriveLink = () => {
     // Die Aktionsmappe ist unabhängig vom Shop und öffnet immer das Dashboard.
+    trackToolUsage('aktionsmappe');
     window.open(BUNDLE_URL, '_blank', 'noopener');
     triggerToast('Aktionsmappe geöffnet.');
   };
@@ -29782,6 +29825,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     onSign: handleSignatureSave
   }), /*#__PURE__*/React.createElement(FolgeterminModal, {
     isOpen: showFolgeterminModal,
+    kundenname: (sharedKundeRef.current || textData?.Kundenname || textData?.CustomerName || '').toString().trim(),
+    defaultEmail: emailText || '',
     onClose: () => {
       setShowFolgeterminModal(false);
       const _folgeResolve = folgeterminResolveRef.current;
@@ -35874,7 +35919,10 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
   }, /*#__PURE__*/React.createElement("div", {
     className: "relative"
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowLanguageDropdown(p => !p),
+    onClick: () => {
+      trackToolUsage('uebersetzer');
+      setShowLanguageDropdown(p => !p);
+    },
     className: "flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200 shadow-sm hover:bg-slate-100 transition-colors",
     title: `Sprache: ${SORTED_LANGUAGES.find(l => l.code === displayLanguage)?.name || 'Deutsch'}`
   }, /*#__PURE__*/React.createElement("div", {
@@ -36077,7 +36125,10 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
   })), /*#__PURE__*/React.createElement("div", {
     className: "relative"
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowLanguageDropdown(p => !p),
+    onClick: () => {
+      trackToolUsage('uebersetzer');
+      setShowLanguageDropdown(p => !p);
+    },
     className: "flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200 shadow-sm hover:bg-slate-100 transition-colors",
     title: `Sprache: ${SORTED_LANGUAGES.find(l => l.code === displayLanguage)?.name || 'Deutsch'}`
   }, /*#__PURE__*/React.createElement("div", {
@@ -36117,6 +36168,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     href: "https://hetec-it.github.io/Freunde-werben-Freunde/",
     target: "_blank",
     rel: "noopener noreferrer",
+    onClick: () => trackToolUsage('freundeWerbenFreunde'),
     className: "p-2 bg-white rounded-lg border border-slate-200 shadow-sm text-slate-500 hover:bg-slate-100 hover:text-blue-600 transition-colors mr-2 flex items-center justify-center",
     title: "Freunde werben (Link)"
   }, /*#__PURE__*/React.createElement(Icon, {
@@ -36138,7 +36190,10 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     return /*#__PURE__*/React.createElement("div", {
       className: "relative mr-2"
     }, /*#__PURE__*/React.createElement("button", {
-      onClick: () => setShowGutschriftRechner(v => !v),
+      onClick: () => {
+        trackToolUsage('rabattrechner');
+        setShowGutschriftRechner(v => !v);
+      },
       className: `p-2 rounded-lg border border-slate-200 shadow-sm transition-colors flex items-center justify-center ${showGutschriftRechner ? 'bg-amber-50 text-amber-600 border-amber-300' : 'bg-white text-slate-500 hover:bg-slate-100 hover:text-blue-600'}`,
       title: "Gutschrift-Rechner"
     }, /*#__PURE__*/React.createElement(Icon, {
