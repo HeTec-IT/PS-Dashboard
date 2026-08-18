@@ -11325,6 +11325,7 @@ const AdminModal = ({
   });
   const [localLink, setLocalLink] = useState(oneDriveLink || '');
   const [expandedCat, setExpandedCat] = useState(null);
+  const [followUpTestSending, setFollowUpTestSending] = useState(false);
   useEffect(() => {
     setLocalData(questions && typeof questions === 'object' ? questions : {
       default: []
@@ -11453,7 +11454,7 @@ const AdminModal = ({
     className: "border border-red-100 rounded-lg p-4 bg-red-50 shadow-sm"
   }, /*#__PURE__*/React.createElement("h4", {
     className: "font-bold text-red-700 mb-2 text-sm"
-  }, "🔴 Fehler-Monitor (Laufzeit-Errors)"), /*#__PURE__*/React.createElement("div", {
+  }, "🔴 Fehler-Monitor (Errors & Warnungen)"), /*#__PURE__*/React.createElement("div", {
     style: {
       maxHeight: '140px',
       overflowY: 'auto',
@@ -11466,25 +11467,28 @@ const AdminModal = ({
       padding: '8px'
     }
   }, (() => {
-    const errs = (window.__appErrors || []).slice().reverse();
-    if (!errs.length) return React.createElement('span', {
+    const errs = (window.__appErrors || []).map(e => ({ ...e, __type: 'error' }));
+    const warns = (window.__appWarnings || []).map(e => ({ ...e, __type: 'warn' }));
+    const combined = errs.concat(warns).sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
+    if (!combined.length) return React.createElement('span', {
       style: {
         color: '#16a34a',
         fontWeight: 700
       }
-    }, '✅ Keine Fehler – App läuft sauber');
-    return errs.map((e, i) => React.createElement('div', {
+    }, '✅ Keine Fehler/Warnungen – App läuft sauber');
+    return combined.map((e, i) => React.createElement('div', {
       key: i,
       style: {
         borderBottom: '1px solid #fee2e2',
         paddingBottom: '3px',
-        marginBottom: '3px'
+        marginBottom: '3px',
+        color: e.__type === 'warn' ? '#92400e' : '#7f1d1d'
       }
     }, React.createElement('span', {
       style: {
         color: '#94a3b8'
       }
-    }, e.ts.slice(11, 19) + ' '), e.msg));
+    }, e.ts.slice(11, 19) + ' '), e.__type === 'warn' ? '⚠️ ' : '', e.msg));
   })()), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -11494,6 +11498,7 @@ const AdminModal = ({
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       window.__appErrors = [];
+      window.__appWarnings = [];
       alert('Log geleert.');
     },
     style: {
@@ -11508,7 +11513,9 @@ const AdminModal = ({
     }
   }, "🗑 Log leeren"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      const txt = (window.__appErrors || []).map(e => e.ts + ' ' + e.msg).join('\n') || 'Keine Fehler';
+      const errs2 = (window.__appErrors || []).map(e => ({ ...e, __type: 'ERROR' }));
+      const warns2 = (window.__appWarnings || []).map(e => ({ ...e, __type: 'WARN' }));
+      const txt = errs2.concat(warns2).sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0).map(e => e.ts + ' [' + e.__type + '] ' + e.msg).join('\n') || 'Keine Fehler';
       const b = new Blob([txt], {
         type: 'text/plain'
       });
@@ -11528,6 +11535,52 @@ const AdminModal = ({
       fontWeight: 700
     }
   }, "⬇ Exportieren"))), /*#__PURE__*/React.createElement("div", {
+    className: "border border-amber-200 rounded-lg p-4 bg-amber-50 shadow-sm"
+  }, /*#__PURE__*/React.createElement("h4", {
+    className: "font-bold text-amber-800 mb-2 text-sm"
+  }, "🧪 Folgetermin-Flow testen (temporär)"), /*#__PURE__*/React.createElement("p", {
+    className: "text-[11px] text-slate-500 mb-3"
+  }, "Sendet einen klar markierten Testtermin (Shop: Aalen) an FOLLOWUP_FLOW_URL. Kein Reload, keine Archivierung. Ergebnis erscheint oben im Monitor."), /*#__PURE__*/React.createElement("button", {
+    disabled: followUpTestSending,
+    onClick: () => {
+      if (followUpTestSending) return;
+      setFollowUpTestSending(true);
+      const url = window.FOLLOWUP_FLOW_URL;
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const testDatum = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const testZeit = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      console.warn('🧪 Folgetermin-Request gestartet');
+      try {
+        fetch(url, {
+          method: 'POST',
+          mode: 'no-cors',
+          keepalive: true,
+          headers: {
+            'Content-Type': 'text/plain;charset=UTF-8'
+          },
+          body: JSON.stringify({
+            shop: 'Aalen',
+            agent: 'TEST-Button (AdminModal)',
+            kunde: '🧪 TESTTERMIN - bitte ignorieren/löschen',
+            email: '',
+            datum: testDatum,
+            zeit: testZeit
+          })
+        }).then(() => {
+          console.warn('🧪 Request vom Browser übergeben (opaque)');
+        }).catch(err => {
+          console.warn('🧪 Fehler: ' + (err && err.message ? err.message : String(err)));
+        }).finally(() => {
+          setFollowUpTestSending(false);
+        });
+      } catch (err) {
+        console.warn('🧪 Fehler: ' + (err && err.message ? err.message : String(err)));
+        setFollowUpTestSending(false);
+      }
+    },
+    className: "px-3 py-2 bg-amber-500 text-white text-sm font-bold rounded hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+  }, followUpTestSending ? "Wird gesendet…" : "Testtermin senden")), /*#__PURE__*/React.createElement("div", {
     className: "border-t border-slate-100 pt-2"
   }, /*#__PURE__*/React.createElement("h4", {
     className: "font-bold text-slate-700 mb-4 text-sm"
@@ -19431,6 +19484,7 @@ function App() {
   // NICHT wiederverwendet oder ueberschrieben.
   // ═════════════════════════════════════════════════
   const FOLLOWUP_FLOW_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com/powerautomate/automations/direct/cu/16/workflows/78ada59282fd433e88742db3017301f2/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=wKov_vZB3VBSzdsZ-oAEnt7PS5LCJ4xy9CstE2qF-ME';
+  window.FOLLOWUP_FLOW_URL = FOLLOWUP_FLOW_URL; // AdminModal (eigene Komponente) braucht das fuer den Test-Button
   // Archiv-Postfach: hierhin schickt der Mitarbeiter das abgeschlossene Angebot (Power Automate sortiert es weiter)
   const ARCHIV_EMAIL = 'pencil-selling@hetec-gmbh.de';
   // Shopabhängige SharePoint-/OneDrive-Ordner für das Archiv-Popup.
