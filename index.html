@@ -165,10 +165,14 @@
     </script>
     <!-- ===== AUTO-INSTALL: Installation beim ersten Oeffnen anstossen ===== -->
     <!--
-      Android/Windows/Desktop (Chrome/Edge): "beforeinstallprompt" abfangen und
-      SOFORT den nativen Install-Dialog zeigen, sobald der Browser ihn anbietet
-      (kein Klick noetig - prompt() braucht keine User-Geste). Passiert nur beim
-      ersten Mal, danach per localStorage gemerkt.
+      Android/Windows/Desktop (Chrome/Edge): "beforeinstallprompt" abfangen.
+      WICHTIG: prompt() darf laut Browser-Vorgabe NUR innerhalb einer echten
+      User-Geste (Klick/Tap) aufgerufen werden - ein automatischer Aufruf ohne
+      Interaktion wird von Chrome stillschweigend ignoriert (kein Fehler, aber
+      auch kein Dialog). Deshalb: sofort ein schmales Banner mit einem
+      "Installieren"-Button zeigen; der Klick darauf loest den echten,
+      nativen Install-Dialog aus. Passiert nur beim ersten Mal, danach per
+      localStorage gemerkt.
       iOS/Safari kennt "beforeinstallprompt" nicht - dort einmalig ein
       Hinweis-Banner mit Anleitung fuer "Zum Home-Bildschirm" (Apple erlaubt
       keine programmatische Installation).
@@ -176,37 +180,68 @@
     <script>
     (function () {
         var STORAGE_KEY = 'ps_install_prompt_shown';
+        var deferredInstallPrompt = null;
+
         try {
             var standalone = window.matchMedia('(display-mode: standalone)').matches ||
                               window.navigator.standalone === true;
             if (standalone || localStorage.getItem(STORAGE_KEY)) return;
         } catch (e) {}
 
+        function markShown() {
+            try { localStorage.setItem(STORAGE_KEY, '1'); } catch (e) {}
+        }
+
+        function showBanner(text, buttonText, onButtonClick) {
+            var b = document.createElement('div');
+            b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;' +
+                'background:#000068;color:#fff;font:14px/1.4 -apple-system,sans-serif;' +
+                'padding:12px 16px;display:flex;align-items:center;justify-content:space-between;' +
+                'gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.25);';
+            var txt = document.createElement('span');
+            txt.textContent = text;
+            txt.style.cssText = 'flex:1;';
+            b.appendChild(txt);
+            if (buttonText) {
+                var btn = document.createElement('button');
+                btn.textContent = buttonText;
+                btn.style.cssText = 'background:#fff;color:#000068;border:0;border-radius:4px;' +
+                    'padding:8px 14px;font-weight:bold;cursor:pointer;white-space:nowrap;';
+                btn.addEventListener('click', function () {
+                    b.remove();
+                    if (onButtonClick) onButtonClick();
+                });
+                b.appendChild(btn);
+            }
+            var x = document.createElement('span');
+            x.textContent = '\u00d7';
+            x.style.cssText = 'cursor:pointer;font-size:20px;line-height:1;';
+            x.addEventListener('click', function () { b.remove(); });
+            b.appendChild(x);
+            document.body.appendChild(b);
+        }
+
         window.addEventListener('beforeinstallprompt', function (e) {
             e.preventDefault();
-            try { localStorage.setItem(STORAGE_KEY, '1'); } catch (err) {}
-            try { e.prompt(); } catch (err) {}
+            deferredInstallPrompt = e;
+            markShown();
+            var show = function () {
+                showBanner('App installieren?', 'Installieren', function () {
+                    if (!deferredInstallPrompt) return;
+                    deferredInstallPrompt.prompt();
+                    deferredInstallPrompt = null;
+                });
+            };
+            if (document.body) show();
+            else document.addEventListener('DOMContentLoaded', show);
         });
 
-        window.addEventListener('appinstalled', function () {
-            try { localStorage.setItem(STORAGE_KEY, '1'); } catch (e) {}
-        });
+        window.addEventListener('appinstalled', markShown);
 
         if (window.__PENCIL_INSTALL_MODE === 'apple-shortcut') {
             document.addEventListener('DOMContentLoaded', function () {
-                try { localStorage.setItem(STORAGE_KEY, '1'); } catch (e) {}
-                var b = document.createElement('div');
-                b.textContent = 'Installieren: Teilen-Symbol \u2192 "Zum Home-Bildschirm"';
-                b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;' +
-                    'background:#000068;color:#fff;font:14px/1.4 -apple-system,sans-serif;' +
-                    'padding:12px 40px 12px 16px;text-align:center;box-shadow:0 -2px 8px rgba(0,0,0,.25);';
-                var x = document.createElement('span');
-                x.textContent = '\u00d7';
-                x.style.cssText = 'position:absolute;right:14px;top:50%;transform:translateY(-50%);' +
-                    'cursor:pointer;font-size:20px;line-height:1;';
-                x.addEventListener('click', function () { b.remove(); });
-                b.appendChild(x);
-                document.body.appendChild(b);
+                markShown();
+                showBanner('Installieren: Teilen-Symbol \u2192 "Zum Home-Bildschirm"', null, null);
             });
         }
     })();
