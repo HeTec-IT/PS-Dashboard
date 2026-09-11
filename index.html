@@ -74,6 +74,55 @@
     })();
     </script>
 
+    <!-- ===== OFFLINE-BANNER: warnt sofort bei Verbindungsverlust (fix, nicht blinkend) ===== -->
+    <style>
+    #ps-offline-banner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 999999;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 10px 16px;
+        background: #dc2626;
+        color: #fff;
+        font-family: Arial, Helvetica, sans-serif;
+        font-weight: 800;
+        font-size: 14px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    #ps-offline-banner.ps-visible { display: flex; }
+    </style>
+    <script>
+    (function() {
+        function ensureBanner() {
+            var el = document.getElementById('ps-offline-banner');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'ps-offline-banner';
+                el.innerHTML = '\uD83D\uDCF6 Keine Internetverbindung – Angebot wird lokal geparkt';
+                document.body.appendChild(el);
+            }
+            return el;
+        }
+        function updateBanner() {
+            var el = ensureBanner();
+            var offline = navigator.onLine === false;
+            el.classList.toggle('ps-visible', offline);
+        }
+        window.addEventListener('online', updateBanner);
+        window.addEventListener('offline', updateBanner);
+        if (document.body) updateBanner();
+        else document.addEventListener('DOMContentLoaded', updateBanner);
+        // Global abfragbar, damit Park-Logik den Grund kennt.
+        window.__psIsOffline = function() { return navigator.onLine === false; };
+    })();
+    </script>
+
     <!-- ===== INSTALLATIONSMODUS: Android/Windows = PWA, Apple = Vollbild-Verknuepfung ===== -->
     <!--
       WICHTIG (seit v55.5.0):
@@ -194,10 +243,15 @@
 
         function showBanner(text, buttonText, onButtonClick) {
             var b = document.createElement('div');
-            b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;' +
+            // v55.6: War vorher bottom:0 - lag GENAU auf der unteren Werkzeugleiste
+            // (Stift-Tools, "Überspringen", "Zum Angebot") und blockierte dort
+            // jeden Tap, solange sie nicht per "x" weggetippt wurde. Fuer den
+            // Verkaeufer sah das aus wie "unten eingefroren". Jetzt oben, wie
+            // das Offline-Banner - blockiert dort nichts Wichtiges.
+            b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99998;' +
                 'background:#000068;color:#fff;font:14px/1.4 -apple-system,sans-serif;' +
                 'padding:12px 16px;display:flex;align-items:center;justify-content:space-between;' +
-                'gap:12px;box-shadow:0 -2px 8px rgba(0,0,0,.25);';
+                'gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.25);';
             var txt = document.createElement('span');
             txt.textContent = text;
             txt.style.cssText = 'flex:1;';
@@ -20966,11 +21020,21 @@ function App() {
   // ===== SKIP-LIMIT MANAGEMENT (Firestore-basiert) =====
   const getMonthKey = () => new Date().toISOString().slice(0, 7); // "2026-06"
 
+  // v55.5: Bei schlechter/instabiler Mobilfunkverbindung (online, aber sehr
+  // langsam) kann ein Firestore .get()/.set() sehr lange haengen statt zu
+  // fehlern - der try/catch in den Funktionen unten greift dann NICHT,
+  // weil kein Error geworfen wird, sondern die Anfrage einfach nie ankommt.
+  // Folge: "Zum Angebot"/"Überspringen" wirkt eingefroren, springt nicht auf
+  // Seite 2. Deshalb JEDE Firestore-Anfrage hier hart timeouten (4s) und
+  // mit Fallback-Wert weitermachen, statt endlos zu warten.
+  const psFireTimeout = (promise, fallback, ms = 4000) => Promise.race([promise, new Promise(res => setTimeout(() => res(fallback), ms))]);
+
   const getSkipCountThisMonth = async agentName => {
     try {
       const db = getStatsDb();
       const docId = `skip_${agentName}_${getMonthKey()}`;
-      const doc = await db.collection('skip_limits').doc(docId).get();
+      const doc = await psFireTimeout(db.collection('skip_limits').doc(docId).get(), null);
+      if (!doc) return 0; // Timeout → nicht blockieren, Skip einfach zulassen
       return doc.exists ? doc.data().count || 0 : 0;
     } catch (e) {
       console.error('getSkipCountThisMonth:', e);
@@ -20980,7 +21044,8 @@ function App() {
   const getSkipLimit = async agentName => {
     try {
       const db = getStatsDb();
-      const doc = await db.collection('skip_limits').doc(`limit_${agentName}`).get();
+      const doc = await psFireTimeout(db.collection('skip_limits').doc(`limit_${agentName}`).get(), null);
+      if (!doc) return 15; // Timeout → Standardlimit
       return doc.exists ? doc.data().max_limit || 15 : 15;
     } catch (e) {
       console.error('getSkipLimit:', e);
@@ -20991,13 +21056,15 @@ function App() {
     try {
       const db = getStatsDb();
       const docId = `skip_${agentName}_${getMonthKey()}`;
-      await db.collection('skip_limits').doc(docId).set({
+      await psFireTimeout(db.collection('skip_limits').doc(docId).set({
         agent: agentName,
         userUid: window.__PS_USER_UID || '',
         month: getMonthKey(),
         count: firebase.firestore.FieldValue.increment(1),
         ts: new Date().toISOString()
-      }, { merge: true });
+      }, { merge: true }), null);
+      // Timeout hier bedeutet nur: Zaehlung evtl. verzögert/verloren –
+      // niemals das Weiterkommen des Beraters blockieren.
     } catch (e) {
       console.error('incrementSkipCount:', e);
     }
@@ -21037,7 +21104,8 @@ function App() {
   const getSkipExempt = async agentName => {
     try {
       const db = getStatsDb();
-      const doc = await db.collection('skip_limits').doc(`limit_${agentName}`).get();
+      const doc = await psFireTimeout(db.collection('skip_limits').doc(`limit_${agentName}`).get(), null);
+      if (!doc) return false; // Timeout → nicht als freigeschaltet annehmen
       return !!(doc.exists && doc.data().exempt === true);
     } catch (e) {
       console.error('getSkipExempt:', e);
@@ -22620,7 +22688,7 @@ function App() {
       });
       if (!parkedOk) throw new Error('Lokaler Park-Speicher nicht verfügbar');
       try {
-        triggerToast('🅿️ Geparkt – 24h über das Archiv-Symbol abrufbar. Angebot geht nicht verloren.');
+        triggerToast((window.__psIsOffline && window.__psIsOffline() ? '🅿️ Kein Internet – ' : '🅿️ ') + 'Geparkt – 24h über das Archiv-Symbol abrufbar. Angebot geht nicht verloren.');
       } catch (e) {}
       try {
         refreshParkedCount();
@@ -23197,7 +23265,7 @@ function App() {
               if (!parkedOk) throw new Error('Lokaler Park-Speicher nicht verfügbar');
               archiveSentRef.current = true;
               try {
-                triggerToast('🅿️ Geparkt – 24h über das Archiv-Symbol abrufbar.');
+                triggerToast((window.__psIsOffline && window.__psIsOffline() ? '🅿️ Kein Internet – ' : '🅿️ ') + 'Geparkt – 24h über das Archiv-Symbol abrufbar.');
               } catch (e) {}
               try {
                 refreshParkedCount();
@@ -28535,7 +28603,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
             });
             if (!parkedOk) throw new Error('Lokaler Park-Speicher nicht verfügbar');
             try {
-              triggerToast('🅿️ Geparkt – 24h über das Archiv-Symbol abrufbar. Angebot geht nicht verloren.');
+              triggerToast((window.__psIsOffline && window.__psIsOffline() ? '🅿️ Kein Internet – ' : '🅿️ ') + 'Geparkt – 24h über das Archiv-Symbol abrufbar. Angebot geht nicht verloren.');
             } catch (e) {}
             try {
               refreshParkedCount();
@@ -36333,6 +36401,18 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       if (isFormValid) {
         setView('offer');
         setViewOfferCounter(c => c + 1);
+      } else {
+        // v55.6: Tippen auf den grauen Button tat bisher GAR NICHTS - kein Toast,
+        // kein Hinweis. Der Grund stand nur im "title"-Tooltip, den Tablets per
+        // Touch nie anzeigen (kein Hover). Für den Berater sah das aus wie
+        // "Knopf reagiert nicht". Jetzt: klar benennen, was noch fehlt.
+        const missing = [];
+        if (customerType === "") missing.push("Kundentyp");
+        if (segment === "") missing.push("Segment");
+        if (techSituation === "") missing.push("Anbieter");
+        try {
+          triggerToast('⚠️ Bitte zuerst ausfüllen: ' + missing.join(', '));
+        } catch (e) {}
       }
     },
     className: `px-6 py-2 rounded-lg font-bold shadow-lg text-sm flex items-center gap-2 transition-all ${isFormValid ? 'bg-blue-600 text-white hover:bg-blue-700 cursor-pointer' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`,
