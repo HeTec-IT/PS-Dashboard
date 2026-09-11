@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v54.0.3-startfix-audit)
+         KEIN HTML-CACHE  (v55.0-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -74,52 +74,53 @@
     })();
     </script>
 
-    <!-- ===== OFFLINE-BANNER: warnt sofort bei Verbindungsverlust (fix, nicht blinkend) ===== -->
-    <style>
-    #ps-offline-banner {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        z-index: 999999;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        padding: 10px 16px;
-        background: #dc2626;
-        color: #fff;
-        font-family: Arial, Helvetica, sans-serif;
-        font-weight: 800;
-        font-size: 14px;
-        text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-    }
-    #ps-offline-banner.ps-visible { display: flex; }
-    </style>
+    <!-- ===== VERBINDUNGS-CHECK: aktiver Netz-Status fuer das WLAN-Icon im Header ===== -->
     <script>
     (function() {
-        function ensureBanner() {
-            var el = document.getElementById('ps-offline-banner');
-            if (!el) {
-                el = document.createElement('div');
-                el.id = 'ps-offline-banner';
-                el.innerHTML = '\uD83D\uDCF6 Keine Internetverbindung – Angebot wird lokal geparkt';
-                document.body.appendChild(el);
+        var effectivelyOffline = false; // aktiver Check, nicht nur navigator.onLine
+
+        function notify() {
+            try {
+                window.dispatchEvent(new CustomEvent('ps-connectivity', { detail: { offline: effectivelyOffline } }));
+            } catch (e) {}
+        }
+        // v55.0: navigator.onLine meldet nur, ob WLAN/Mobilfunk-Radio technisch
+        // an ist - NICHT ob wirklich Internet ankommt. Bei schwachem/gestoertem
+        // Netz (z.B. die o2-Stoerung) bleibt onLine=true, obwohl praktisch
+        // nichts durchkommt. Deshalb aktiv pruefen: alle 15s ein winziger
+        // same-origin Request mit 4s-Zeitlimit, mit Cache-Buster in der URL,
+        // damit der Service Worker nicht einfach aus dem Cache antwortet und
+        // einen falschen "online"-Eindruck gibt.
+        function activeCheck() {
+            if (navigator.onLine === false) {
+                effectivelyOffline = true;
+                notify();
+                return;
             }
-            return el;
+            try {
+                var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                var timer = ctrl ? setTimeout(function() { ctrl.abort(); }, 4000) : null;
+                var pingUrl = location.pathname + '?_ps_ping=' + Date.now();
+                fetch(pingUrl, { method: 'HEAD', cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+                    .then(function() {
+                        if (timer) clearTimeout(timer);
+                        effectivelyOffline = false;
+                        notify();
+                    })
+                    .catch(function() {
+                        if (timer) clearTimeout(timer);
+                        effectivelyOffline = true;
+                        notify();
+                    });
+            } catch (e) {}
         }
-        function updateBanner() {
-            var el = ensureBanner();
-            var offline = navigator.onLine === false;
-            el.classList.toggle('ps-visible', offline);
-        }
-        window.addEventListener('online', updateBanner);
-        window.addEventListener('offline', updateBanner);
-        if (document.body) updateBanner();
-        else document.addEventListener('DOMContentLoaded', updateBanner);
-        // Global abfragbar, damit Park-Logik den Grund kennt.
-        window.__psIsOffline = function() { return navigator.onLine === false; };
+        window.addEventListener('online', activeCheck);
+        window.addEventListener('offline', function() { effectivelyOffline = true; notify(); });
+        if (document.body) activeCheck();
+        else document.addEventListener('DOMContentLoaded', activeCheck);
+        setInterval(activeCheck, 15000);
+        // Global abfragbar, damit Park-/Archiv-Logik den echten Status kennt.
+        window.__psIsOffline = function() { return effectivelyOffline; };
     })();
     </script>
 
@@ -200,12 +201,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=54.0.3';
+        manifestLink.href = 'manifest.webmanifest?v=55.0';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=54.0.3').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.0').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -332,7 +333,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v54.0.3)
+         VERSION + CACHE-BUSTING  (v55.0)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -4589,6 +4590,7 @@ const ICONS = {
   Eraser: '<path d="m2.9 15.8a2.9 2.9 0 0 0 9.9 0l5.6-5.6a2.9 2.9 0 0 0-4.2-4.2l-5.6 5.6c-.4.4-.5 1.05-.2 1.6"/><path d="m11 7 5.3 5.3"/><path d="M22 21H7"/>',
   Palette: '<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
   Wifi: '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" x2="12.01" y1="20" y2="20"/>',
+  WifiOff: '<line x1="1" x2="23" y1="1" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" x2="12.01" y1="20" y2="20"/>',
   Zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
   Globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10z"/><path d="M2 12h20"/>',
   Gauge: '<path d="m12 15 3.5-3.5"/><path d="M20.3 18c.6-1 .9-2.2.9-3.5a9 9 0 1 0-9 9c1.3 0 2.5-.3 3.5-.9"/>',
@@ -20290,6 +20292,16 @@ function App() {
   // ersten Nutzung stehen. Reihenfolge/Logik unverändert. ═══
   const [toastMessage, setToastMessage] = useState(null);
   const toastTimerRef = useRef(null);
+  // v55.1: WLAN-Status fuer das kleine Icon im Header (ersetzt Auto-Punkt).
+  // Kommt als Event vom aktiven Verbindungs-Check ganz oben in der Datei
+  // (window.__psIsOffline), da der Check ausserhalb von React laeuft.
+  const [isOffline, setIsOffline] = useState(false);
+  useEffect(() => {
+    const handler = e => setIsOffline(!!(e.detail && e.detail.offline));
+    window.addEventListener('ps-connectivity', handler);
+    if (window.__psIsOffline) setIsOffline(window.__psIsOffline());
+    return () => window.removeEventListener('ps-connectivity', handler);
+  }, []);
   const [canvasStatus, setCanvasStatus] = useState({
     offer1: 'neutral',
     offer2: 'neutral',
@@ -27821,15 +27833,26 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
             archiveSubject: archiveSubject,
             pdfBase64: pdfBase64
           };
-          // Exakt EIN HTTP-POST pro manueller Archiv-Aktion.
-          await fetch(ARCHIVE_FLOW_URL, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'text/plain'
-            },
-            body: JSON.stringify(payload)
-          });
+          // v55.6: Dieser fetch() hatte KEIN Timeout - bei "online, aber Netz
+          // extrem schlecht" (genau der o2-Störungsfall) hängt er teils sehr
+          // lange, BEVOR ueberhaupt ein Fehler auftritt. Deshalb wirkte es wie
+          // endloses "immer wieder versuchen" statt einer klaren Meldung.
+          // Jetzt: hartes 8s-Zeitlimit, danach gilt es als fehlgeschlagen.
+          const _archiveAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+          const _archiveAbortTimer = _archiveAbort ? setTimeout(() => _archiveAbort.abort(), 8000) : null;
+          try {
+            await fetch(ARCHIVE_FLOW_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: {
+                'Content-Type': 'text/plain'
+              },
+              body: JSON.stringify(payload),
+              signal: _archiveAbort ? _archiveAbort.signal : undefined
+            });
+          } finally {
+            if (_archiveAbortTimer) clearTimeout(_archiveAbortTimer);
+          }
           return { ok: true, handedToFlow: true };
         })();
 
@@ -28632,7 +28655,35 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       // steuert die Power-Automate-Sortierung.
       const _dateiname = _type === 'abschluss' ? buildArchivDateiname('abschluss', _datum, _ruf) : buildArchivDateiname('angebot', _datum, _kunde);
       const dispatchResult = await dispatchArchiveMail(blob, _dateiname, _betreff, null, ARCHIVE_MANUAL_INTENT);
-      return dispatchResult && dispatchResult.ok === true ? dispatchResult : { ok: false, error: dispatchResult && dispatchResult.error };
+      if (dispatchResult && dispatchResult.ok === true) return dispatchResult;
+
+      // v55.6: Bisher wurde hier nur "fehlgeschlagen" gemeldet, das Angebot
+      // blieb offen und man wusste nicht ob's am Netz lag. Jetzt: bei einem
+      // Fehler an dieser Stelle automatisch lokal parken (wie beim fehlenden
+      // Rufnummer-Fall) statt den Verkaeufer mit einer reinen Fehlermeldung
+      // dastehen zu lassen.
+      try {
+        const parkedOk = await parkArchiveEntry({
+          id: 'park_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          ts: Date.now(),
+          type: _type,
+          agent: _agent,
+          datum: _datum,
+          kunde: (sharedKundeRef.current || textData?.Kundenname || '').toString().trim(),
+          dateiname: _dateiname,
+          pdfBlob: blob
+        });
+        if (!parkedOk) throw new Error('Lokaler Park-Speicher nicht verfügbar');
+        try {
+          triggerToast((window.__psIsOffline && window.__psIsOffline() ? '🅿️ Kein Internet – ' : '🅿️ ') + 'Archivierung fehlgeschlagen, Angebot 24h lokal geparkt.');
+        } catch (e) {}
+        try {
+          refreshParkedCount();
+        } catch (e) {}
+        return { ok: true, parked: true };
+      } catch (parkErr) {
+        return { ok: false, error: (dispatchResult && dispatchResult.error) || parkErr };
+      }
     } catch (err) {
       hideOverlay2();
       try {
@@ -30298,26 +30349,15 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       alignItems: "center",
       gap: 4,
       marginRight: 4,
-      cursor: "default"
+      cursor: "default",
+      color: isOffline ? '#ef4444' : '#22c55e'
     },
-    title: "Autosave aktiv – alle 30s gesichert"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 7,
-      height: 7,
-      borderRadius: "50%",
-      background: "#22c55e",
-      flexShrink: 0
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 9,
-      fontWeight: 700,
-      color: "#94a3b8",
-      letterSpacing: "0.04em",
-      userSelect: "none"
-    }
-  }, "AUTO")), /*#__PURE__*/React.createElement("span", {
+    title: isOffline ? "Keine Internetverbindung – Angebote werden lokal geparkt" : "Verbunden"
+  }, /*#__PURE__*/React.createElement("style", null, `.ps-wifi-blink{animation:psWifiBlink 1s step-start infinite}@keyframes psWifiBlink{50%{opacity:0.15}}`), /*#__PURE__*/React.createElement(Icon, {
+    d: isOffline ? ICONS.WifiOff : ICONS.Wifi,
+    size: 15,
+    className: isOffline ? "ps-wifi-blink" : ""
+  })), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 8,
       fontWeight: 700,
@@ -30328,7 +30368,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v54.0.3"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.0"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
