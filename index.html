@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v55.6-startfix-audit)
+         KEIN HTML-CACHE  (v55.8-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -201,12 +201,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.6';
+        manifestLink.href = 'manifest.webmanifest?v=55.8';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.6').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.8').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -333,7 +333,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v55.6)
+         VERSION + CACHE-BUSTING  (v55.8)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -21843,7 +21843,6 @@ function App() {
   const autosaveTimerRef = React.useRef(null);
   const autosaveWarnedRef = React.useRef(false);
   const [showRestoreToast, setShowRestoreToast] = React.useState(false);
-  const [restoreCountdownSec, setRestoreCountdownSec] = React.useState(null); // v55.5: Restzeit-Anzeige beim Auto-Laden
   const autosaveRestoredRef = React.useRef(false);
   const getAutosaveKey = React.useCallback(() => {
     const uid = String(window.__PS_USER_UID || '').trim();
@@ -21936,14 +21935,15 @@ function App() {
         Object.values(snap?.textData || {}).some(v => String(v || '').trim()) ||
         Object.values(snap?.drawnStrokes || {}).some(v => Array.isArray(v) && v.length));
       if (sameOwner && hasContent && fresh) {
-        // v55.4: Zwischenspeicherung dient NUR dem kurzen Wechsel zur o2-/
-        // Telekom-App waehrend der Vertragsunterschrift - nicht laengeren
-        // Pausen. Aelter als 5 Minuten -> immer verwerfen, keine Nachfrage.
-        // v55.5: Mitarbeiter soll sehen, wie viel von den 5 Minuten beim
-        // Wiedereinstieg noch uebrig war -> kurze, tickende Restzeit-Anzeige.
-        const remainingSec = Math.max(0, Math.round((5 * 60 * 1000 - (Date.now() - snap.ts)) / 1000));
-        setRestoreCountdownSec(remainingSec);
-        setTimeout(() => { try { handleRestoreAutosave(); } catch (e) {} }, 0);
+        // v55.8: Kein stilles Auto-Laden mehr - stattdessen immer kurz
+        // fragen (bestehendes Banner: "Laden" / "x"). Grund: beim
+        // simplen Home-Button-Wechsel bleibt die Seite ohnehin im
+        // Speicher (kein Reload, kein Datenverlust) - dieser Zweig
+        // greift nur, wenn die Seite WIRKLICH neu geladen wurde. Aelter
+        // als 5 Minuten -> immer verwerfen, keine Nachfrage (dient nur
+        // dem kurzen Wechsel zur o2-/Telekom-App waehrend der
+        // Vertragsunterschrift).
+        setShowRestoreToast(true);
       } else {
         clearAutosave();
       }
@@ -21967,17 +21967,6 @@ function App() {
       window.removeEventListener('pagehide', saveNow);
     };
   }, [saveToAutosave]);
-
-  // v55.5: Tickt restoreCountdownSec runter bis 0, dann ausblenden.
-  React.useEffect(() => {
-    if (restoreCountdownSec === null) return;
-    if (restoreCountdownSec <= 0) {
-      const t = setTimeout(() => setRestoreCountdownSec(null), 1500);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => setRestoreCountdownSec(s => (s === null ? null : s - 1)), 1000);
-    return () => clearTimeout(t);
-  }, [restoreCountdownSec]);
 
   const handleRestoreAutosave = () => {
     try {
@@ -30406,7 +30395,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.6"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.8"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -30732,12 +30721,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       e.currentTarget.style.transform = 'scale(1)';
       e.currentTarget.style.background = k === '✓' ? '#22c55e' : k === '⌫' ? '#fef2f2' : '#ffffff';
     }
-  }, k))))), /*#__PURE__*/React.createElement(RestoreToastBanner, null), restoreCountdownSec !== null && /*#__PURE__*/React.createElement("div", {
-    className: "print-hide-toast",
-    onClick: () => setRestoreCountdownSec(null),
-    style: { display: 'flex', alignItems: 'center', gap: 4, background: '#f0f6ff', color: '#1d4ed8', padding: '3px 8px', borderRadius: 8, border: '1.5px solid #bfdbfe', fontSize: 11, fontWeight: 800, flexShrink: 0, whiteSpace: 'nowrap', cursor: 'pointer' },
-    title: "Sitzung automatisch geladen – Restzeit des 5-Minuten-Fensters. Tippen zum Ausblenden."
-  }, "⏱ ", Math.floor(restoreCountdownSec / 60) + ":" + String(restoreCountdownSec % 60).padStart(2, '0'), " ✕"), rufModalOpen && ReactDOM.createPortal(/*#__PURE__*/React.createElement(RufnummerOrParkModal, {
+  }, k))))), /*#__PURE__*/React.createElement(RestoreToastBanner, null), rufModalOpen && ReactDOM.createPortal(/*#__PURE__*/React.createElement(RufnummerOrParkModal, {
     direktPark: rufModalDirektPark,
     allowPark: rufModalAllowPark,
     onSubmit: val => {
@@ -31934,9 +31918,20 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       position: 'relative'
     }
   }, sitLayoutMode === 'grid' && (() => {
+    // v55.7: Fortschritt zaehlte bisher JEDEN Strich/jeden Buchstaben als
+    // "ausgefuellt" - lief also schon bei einem einzelnen Tupfer weiter,
+    // obwohl der gruene Punkt am Feld selbst noch nicht an war. Jetzt exakt
+    // dieselbe Schwelle wie beim gruenen Punkt (s.u.): erst wenn ein Feld
+    // wirklich "gruen" ist, zaehlt es fuer den Fortschritt.
     const filled = SITUATION_ITEMS.filter(item => {
       const sk = `sit_${item.id.replace(/\s+/g, '')}`;
-      return !!(getDisplayText(item.id) || drawnStrokes && drawnStrokes[sk] && drawnStrokes[sk].length);
+      const _text = String(getDisplayText(item.id) || '').trim();
+      const _pen = (drawnStrokes && drawnStrokes[sk] || []).filter(s => s && s.tool !== 'eraser' && s.points && s.points.length >= 3).length;
+      const _era = (drawnStrokes && drawnStrokes[sk] || []).filter(s => s && s.tool === 'eraser' && s.points && s.points.length >= 3).length;
+      // v55.8: Nur "Anbieter" darf ab 2 Zeichen/Strichen gruen sein (wegen
+      // "o2"). Alle anderen Felder bleiben bei 3 (auf Wunsch).
+      const _min = item.id === 'Anbieter' ? 2 : 3;
+      return _text.length >= _min || Math.max(0, _pen - _era) >= _min;
     }).length;
     const pct = Math.round(filled / SITUATION_ITEMS.length * 100);
     return /*#__PURE__*/React.createElement("div", {
@@ -32007,7 +32002,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     const _text = String(getDisplayText(item.id) || '').trim();
     const _pen = (drawnStrokes && drawnStrokes[sitKey] || []).filter(s => s && s.tool !== 'eraser' && s.points && s.points.length >= 3).length;
     const _era = (drawnStrokes && drawnStrokes[sitKey] || []).filter(s => s && s.tool === 'eraser' && s.points && s.points.length >= 3).length;
-    const hasContent = _text.length >= 3 || Math.max(0, _pen - _era) >= 3;
+    // v55.8: Nur "Anbieter" ab 2 (wegen "o2"), alle anderen Felder bei 3.
+    const _minLen = item.id === 'Anbieter' ? 2 : 3;
+    const hasContent = _text.length >= _minLen || Math.max(0, _pen - _era) >= _minLen;
     return /*#__PURE__*/React.createElement("div", {
       key: item.id,
       style: {
