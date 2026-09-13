@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v55.0-startfix-audit)
+         KEIN HTML-CACHE  (v55.6-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -201,12 +201,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.0';
+        manifestLink.href = 'manifest.webmanifest?v=55.6';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.0').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.6').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -333,7 +333,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v55.0)
+         VERSION + CACHE-BUSTING  (v55.6)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -21843,6 +21843,7 @@ function App() {
   const autosaveTimerRef = React.useRef(null);
   const autosaveWarnedRef = React.useRef(false);
   const [showRestoreToast, setShowRestoreToast] = React.useState(false);
+  const [restoreCountdownSec, setRestoreCountdownSec] = React.useState(null); // v55.5: Restzeit-Anzeige beim Auto-Laden
   const autosaveRestoredRef = React.useRef(false);
   const getAutosaveKey = React.useCallback(() => {
     const uid = String(window.__PS_USER_UID || '').trim();
@@ -21930,16 +21931,53 @@ function App() {
     try {
       const snap = JSON.parse(raw);
       const sameOwner = snap && snap.appBrand === 'o2' && String(snap.ownerUid || '') === uid;
-      const fresh = snap && snap.ts && Date.now() - snap.ts < 12 * 60 * 60 * 1000;
+      const fresh = snap && snap.ts && Date.now() - snap.ts < 5 * 60 * 1000;
       const hasContent = !!(snap?.customerSignature || snap?.emailText || snap?.beratungsId ||
         Object.values(snap?.textData || {}).some(v => String(v || '').trim()) ||
         Object.values(snap?.drawnStrokes || {}).some(v => Array.isArray(v) && v.length));
-      // "Sitzung wiederherstellen"-Hinweis wird nicht mehr angezeigt – alte Sicherung einfach verwerfen.
-      clearAutosave();
+      if (sameOwner && hasContent && fresh) {
+        // v55.4: Zwischenspeicherung dient NUR dem kurzen Wechsel zur o2-/
+        // Telekom-App waehrend der Vertragsunterschrift - nicht laengeren
+        // Pausen. Aelter als 5 Minuten -> immer verwerfen, keine Nachfrage.
+        // v55.5: Mitarbeiter soll sehen, wie viel von den 5 Minuten beim
+        // Wiedereinstieg noch uebrig war -> kurze, tickende Restzeit-Anzeige.
+        const remainingSec = Math.max(0, Math.round((5 * 60 * 1000 - (Date.now() - snap.ts)) / 1000));
+        setRestoreCountdownSec(remainingSec);
+        setTimeout(() => { try { handleRestoreAutosave(); } catch (e) {} }, 0);
+      } else {
+        clearAutosave();
+      }
     } catch (_) {
       clearAutosave();
     }
   }, [getAutosaveKey]);
+
+  // v55.2: Bisher wurde nur alle 30s gesichert - beim App-Wechsel (o2-/
+  // Telekom-App oeffnen) haben mobile Browser die Seite oft schon VOR dem
+  // naechsten Intervall pausiert/entladen, dadurch ging der letzte Stand
+  // verloren. Jetzt zusaetzlich SOFORT sichern, sobald die Seite in den
+  // Hintergrund geht.
+  React.useEffect(() => {
+    const saveNow = () => { try { saveToAutosave(); } catch (e) {} };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') saveNow(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', saveNow);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', saveNow);
+    };
+  }, [saveToAutosave]);
+
+  // v55.5: Tickt restoreCountdownSec runter bis 0, dann ausblenden.
+  React.useEffect(() => {
+    if (restoreCountdownSec === null) return;
+    if (restoreCountdownSec <= 0) {
+      const t = setTimeout(() => setRestoreCountdownSec(null), 1500);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setRestoreCountdownSec(s => (s === null ? null : s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [restoreCountdownSec]);
 
   const handleRestoreAutosave = () => {
     try {
@@ -22029,13 +22067,13 @@ function App() {
     return /*#__PURE__*/React.createElement("div", {
       className: "print-hide-toast animate-in fade-in",
       style: { display: 'flex', alignItems: 'center', gap: 6, background: '#f0f6ff', color: '#1e3a8a', padding: '4px 6px 4px 8px', borderRadius: '8px', border: '1.5px solid #bfdbfe', boxShadow: '0 2px 8px rgba(37,99,235,0.12)', fontSize: '11px', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }
-    }, /*#__PURE__*/React.createElement("span", { style: { fontSize: 13 } }, "💾"), /*#__PURE__*/React.createElement("span", { style: { color: '#1d4ed8', fontWeight: 700 } }, "Sitzung gefunden"), /*#__PURE__*/React.createElement("button", {
+    }, /*#__PURE__*/React.createElement("span", { style: { fontSize: 13 } }, "💾"), /*#__PURE__*/React.createElement("span", { style: { color: '#1d4ed8', fontWeight: 800, fontSize: 12, minWidth: 14, textAlign: 'center' } }, countdown), /*#__PURE__*/React.createElement("button", {
       onClick: handleRestoreAutosave,
       style: { padding: '3px 8px', borderRadius: 6, background: '#2563eb', border: 'none', color: 'white', fontWeight: 800, fontSize: 10, cursor: 'pointer', flexShrink: 0 }
     }, "Laden"), /*#__PURE__*/React.createElement("button", {
       onClick: () => { setShowRestoreToast(false); clearAutosave(); },
       style: { padding: '3px 6px', borderRadius: 6, background: 'transparent', border: '1px solid #bfdbfe', color: '#64748b', fontWeight: 700, fontSize: 10, cursor: 'pointer', flexShrink: 0 }
-    }, "✕ ", countdown));
+    }, "✕"));
   };
 
   // VisualViewport: Toolbar beim Zoom immer sichtbar halten
@@ -30368,7 +30406,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.0"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.6"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -30694,7 +30732,12 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       e.currentTarget.style.transform = 'scale(1)';
       e.currentTarget.style.background = k === '✓' ? '#22c55e' : k === '⌫' ? '#fef2f2' : '#ffffff';
     }
-  }, k))))), /*#__PURE__*/React.createElement(RestoreToastBanner, null), rufModalOpen && ReactDOM.createPortal(/*#__PURE__*/React.createElement(RufnummerOrParkModal, {
+  }, k))))), /*#__PURE__*/React.createElement(RestoreToastBanner, null), restoreCountdownSec !== null && /*#__PURE__*/React.createElement("div", {
+    className: "print-hide-toast",
+    onClick: () => setRestoreCountdownSec(null),
+    style: { display: 'flex', alignItems: 'center', gap: 4, background: '#f0f6ff', color: '#1d4ed8', padding: '3px 8px', borderRadius: 8, border: '1.5px solid #bfdbfe', fontSize: 11, fontWeight: 800, flexShrink: 0, whiteSpace: 'nowrap', cursor: 'pointer' },
+    title: "Sitzung automatisch geladen – Restzeit des 5-Minuten-Fensters. Tippen zum Ausblenden."
+  }, "⏱ ", Math.floor(restoreCountdownSec / 60) + ":" + String(restoreCountdownSec % 60).padStart(2, '0'), " ✕"), rufModalOpen && ReactDOM.createPortal(/*#__PURE__*/React.createElement(RufnummerOrParkModal, {
     direktPark: rufModalDirektPark,
     allowPark: rufModalAllowPark,
     onSubmit: val => {
