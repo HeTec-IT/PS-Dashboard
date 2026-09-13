@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v55.9-startfix-audit)
+         KEIN HTML-CACHE  (v55.10-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -201,12 +201,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.9';
+        manifestLink.href = 'manifest.webmanifest?v=55.10';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.9').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.10').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -333,7 +333,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v55.9)
+         VERSION + CACHE-BUSTING  (v55.10)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -28681,6 +28681,35 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       // ⚠️ GESPERRT: Dateiname NUR über buildArchivDateiname() – PENCIL_-Präfix
       // steuert die Power-Automate-Sortierung.
       const _dateiname = _type === 'abschluss' ? buildArchivDateiname('abschluss', _datum, _ruf) : buildArchivDateiname('angebot', _datum, _kunde);
+
+      // v55.10: Bisher hing die Offline-Erkennung beim Archivieren allein
+      // daran, ob der fetch() an ARCHIVE_FLOW_URL fehlschlaegt/timeoutet -
+      // je nach Geraet/Browser kann das mit mode:'no-cors' unzuverlaessig
+      // sein und den Anschein erwecken, es liefe "ganz normal" weiter,
+      // obwohl kein Internet da ist. Jetzt: VOR dem Versand aktiv denselben
+      // Verbindungsstatus wie das WLAN-Icon pruefen und bei Offline sofort
+      // (ohne den fetch ueberhaupt zu versuchen) parken.
+      if (window.__psIsOffline && window.__psIsOffline()) {
+        try {
+          const parkedOkOffline = await parkArchiveEntry({
+            id: 'park_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            ts: Date.now(),
+            type: _type,
+            agent: _agent,
+            datum: _datum,
+            kunde: (sharedKundeRef.current || textData?.Kundenname || '').toString().trim(),
+            dateiname: _dateiname,
+            pdfBlob: blob
+          });
+          if (!parkedOkOffline) throw new Error('Lokaler Park-Speicher nicht verfügbar');
+          try { triggerToast('🅿️ Kein Internet – Angebot 24h lokal geparkt.'); } catch (e) {}
+          try { refreshParkedCount(); } catch (e) {}
+          return { ok: true, parked: true };
+        } catch (offlineParkErr) {
+          return { ok: false, error: offlineParkErr };
+        }
+      }
+
       const dispatchResult = await dispatchArchiveMail(blob, _dateiname, _betreff, null, ARCHIVE_MANUAL_INTENT);
       if (dispatchResult && dispatchResult.ok === true) return dispatchResult;
 
@@ -30395,7 +30424,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.9"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.10"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
