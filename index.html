@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v55.15-startfix-audit)
+         KEIN HTML-CACHE  (v55.16-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -225,12 +225,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.15';
+        manifestLink.href = 'manifest.webmanifest?v=55.16';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.15').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.16').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -357,7 +357,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v55.15)
+         VERSION + CACHE-BUSTING  (v55.16)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -30505,7 +30505,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.15"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.16"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -37541,6 +37541,20 @@ function __psGetBetaApp() {
 function __psGetBetaDb() {
   if (window.__betaDb) return window.__betaDb;
   window.__betaDb = window.firebase.firestore(__psGetBetaApp());
+  // v55.16: Ohne dies lebt der Firestore-Cache nur im Arbeitsspeicher -
+  // bei JEDEM Reload (und die App laedt nach jedem Archivieren neu!) ist er
+  // leer. Wer dann offline ist (z.B. Flugmodus), landet beim Profil-Check
+  // auf einem leeren Snapshot ohne jede Ausweichmoeglichkeit - Sackgasse
+  // ("Profil wird vom Server geladen... bitte Internetverbindung pruefen"),
+  // obwohl er vorher schon angemeldet war. Mit Offline-Persistenz bleibt
+  // das zuletzt bekannte Profil ueber Reloads hinweg in IndexedDB erhalten.
+  try {
+    window.__betaDb.enablePersistence({ synchronizeTabs: true }).catch(function (e) {
+      // Mehrere Tabs offen (failed-precondition) oder Browser unterstuetzt
+      // es nicht (unimplemented) - dann laeuft es einfach ohne
+      // Offline-Cache weiter, wie bisher.
+    });
+  } catch (e) {}
   return window.__betaDb;
 }
 
@@ -38057,7 +38071,8 @@ function __PS_startAuthGate(startAppFn) {
               __psGateRender(
                 '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f8fafc;padding:20px;font-family:system-ui,sans-serif;text-align:center">' +
                   '<div><div style="font-weight:800;color:#0f172a;margin-bottom:6px">Profil wird vom Server geladen …</div>' +
-                  '<div style="font-size:13px;color:#64748b">Bitte kurz die Internetverbindung prüfen.</div></div>' +
+                  '<div style="font-size:13px;color:#64748b;margin-bottom:16px">Bitte kurz die Internetverbindung prüfen.</div>' +
+                  '<button onclick="location.reload()" style="border:0;border-radius:10px;padding:11px 18px;background:#2563eb;color:white;font-weight:800;cursor:pointer">Neu laden</button></div>' +
                 '</div>'
               );
               return;
