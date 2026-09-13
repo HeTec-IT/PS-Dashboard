@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v55.10-startfix-audit)
+         KEIN HTML-CACHE  (v55.15-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -78,11 +78,38 @@
     <script>
     (function() {
         var effectivelyOffline = false; // aktiver Check, nicht nur navigator.onLine
+        var OFFLINE_SINCE_KEY = 'ps_offline_since';
+        var MAX_OFFLINE_MS = 48 * 60 * 60 * 1000; // v55.15: 48h durchgehend offline
 
         function notify() {
             try {
                 window.dispatchEvent(new CustomEvent('ps-connectivity', { detail: { offline: effectivelyOffline } }));
             } catch (e) {}
+        }
+        // v55.15: Nur relevant ist eine DURCHGAENGIGE Offline-Phase, nicht ob
+        // seit dem letzten Reload viel Zeit vergangen ist - ein Geraet, das
+        // die ganze Zeit online ist, soll NIE deswegen ausgeloggt werden.
+        // Beginn der Offline-Phase merken; bei Rueckkehr pruefen, ob sie
+        // laenger als 48h durchgehend war, und nur DANN abmelden.
+        function setOffline(isOffline) {
+            var wasOffline = effectivelyOffline;
+            effectivelyOffline = isOffline;
+            if (isOffline && !wasOffline) {
+                try {
+                    if (!localStorage.getItem(OFFLINE_SINCE_KEY)) {
+                        localStorage.setItem(OFFLINE_SINCE_KEY, String(Date.now()));
+                    }
+                } catch (e) {}
+            } else if (!isOffline && wasOffline) {
+                try {
+                    var since = parseInt(localStorage.getItem(OFFLINE_SINCE_KEY) || '0', 10) || 0;
+                    localStorage.removeItem(OFFLINE_SINCE_KEY);
+                    if (since && Date.now() - since > MAX_OFFLINE_MS && window.__betaAuth) {
+                        window.__betaAuth.signOut().catch(function () {});
+                    }
+                } catch (e) {}
+            }
+            notify();
         }
         // v55.0: navigator.onLine meldet nur, ob WLAN/Mobilfunk-Radio technisch
         // an ist - NICHT ob wirklich Internet ankommt. Bei schwachem/gestoertem
@@ -93,8 +120,7 @@
         // einen falschen "online"-Eindruck gibt.
         function activeCheck() {
             if (navigator.onLine === false) {
-                effectivelyOffline = true;
-                notify();
+                setOffline(true);
                 return;
             }
             try {
@@ -104,18 +130,16 @@
                 fetch(pingUrl, { method: 'HEAD', cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
                     .then(function() {
                         if (timer) clearTimeout(timer);
-                        effectivelyOffline = false;
-                        notify();
+                        setOffline(false);
                     })
                     .catch(function() {
                         if (timer) clearTimeout(timer);
-                        effectivelyOffline = true;
-                        notify();
+                        setOffline(true);
                     });
             } catch (e) {}
         }
         window.addEventListener('online', activeCheck);
-        window.addEventListener('offline', function() { effectivelyOffline = true; notify(); });
+        window.addEventListener('offline', function() { setOffline(true); });
         if (document.body) activeCheck();
         else document.addEventListener('DOMContentLoaded', activeCheck);
         setInterval(activeCheck, 15000);
@@ -201,12 +225,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.10';
+        manifestLink.href = 'manifest.webmanifest?v=55.15';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.10').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.15').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -333,7 +357,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v55.10)
+         VERSION + CACHE-BUSTING  (v55.15)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -28699,6 +28723,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
             datum: _datum,
             kunde: (sharedKundeRef.current || textData?.Kundenname || '').toString().trim(),
             dateiname: _dateiname,
+            betreff: _betreff,
+            readyToAutoSend: true,
             pdfBlob: blob
           });
           if (!parkedOkOffline) throw new Error('Lokaler Park-Speicher nicht verfügbar');
@@ -28727,6 +28753,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
           datum: _datum,
           kunde: (sharedKundeRef.current || textData?.Kundenname || '').toString().trim(),
           dateiname: _dateiname,
+          betreff: _betreff,
+          readyToAutoSend: true,
           pdfBlob: blob
         });
         if (!parkedOk) throw new Error('Lokaler Park-Speicher nicht verfügbar');
@@ -28781,6 +28809,14 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     }
     const _betreff = buildArchivBetreff(entry.type, entry.datum, _ruf, entry.agent);
     const _dateiname = buildArchivDateiname(entry.type, entry.datum, _ruf);
+    // v55.11: Gleicher aktiver Verbindungs-Check wie beim normalen
+    // Archivieren - sonst wuerde ein Nachtragen-Versuch ohne Internet
+    // still fehlschlagen/haengen statt klar zu sagen, dass es noch
+    // an der Verbindung liegt.
+    if (window.__psIsOffline && window.__psIsOffline()) {
+      try { triggerToast('📶 Noch kein Internet – bitte später erneut nachtragen.'); } catch (e) {}
+      return false;
+    }
     try {
       const result = await dispatchArchiveMail(entry.pdfBlob, _dateiname, _betreff, null, ARCHIVE_MANUAL_INTENT);
       if (!result || result.ok !== true) return false;
@@ -28801,6 +28837,51 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       return false;
     }
   };
+
+  // v55.13: Sobald die Verbindung zurueckkommt, alle Angebote, die NUR
+  // wegen fehlendem Internet geparkt wurden (readyToAutoSend: true - Rufnummer
+  // etc. war bereits vollstaendig), automatisch und ohne Nachfrage
+  // nachtragen. Angebote, die geparkt wurden WEIL die Rufnummer fehlte,
+  // bleiben bewusst manuell (kein readyToAutoSend-Flag) - die braucht
+  // weiterhin jemanden, der die Nummer eintippt.
+  const autoFlushParkedArchive = async () => {
+    try {
+      const entries = await listParkedArchive();
+      const ready = (entries || []).filter(e => e && e.readyToAutoSend === true);
+      if (!ready.length) return;
+      let sent = 0;
+      for (const entry of ready) {
+        if (window.__psIsOffline && window.__psIsOffline()) break; // erneut offline geworden -> abbrechen
+        try {
+          const result = await dispatchArchiveMail(entry.pdfBlob, entry.dateiname, entry.betreff || buildArchivBetreff(entry.type, entry.datum, '', entry.agent), null, ARCHIVE_MANUAL_INTENT);
+          if (result && result.ok === true) {
+            await deleteParkedArchiveEntry(entry.id);
+            sent++;
+          }
+        } catch (e) {}
+      }
+      if (sent > 0) {
+        try {
+          triggerToast(`✅ Internet zurück – ${sent} geparkte${sent === 1 ? 's' : ''} Angebot${sent === 1 ? '' : 'e'} automatisch nachgetragen.`);
+        } catch (e) {}
+        try { refreshParkedCount(); } catch (e) {}
+      }
+    } catch (e) {}
+  };
+
+  React.useEffect(() => {
+    const wasOfflineRef = { current: !!(window.__psIsOffline && window.__psIsOffline()) };
+    const handler = e => {
+      const offlineNow = !!(e.detail && e.detail.offline);
+      if (wasOfflineRef.current && !offlineNow) {
+        // Wechsel von offline -> online: geparkte Angebote nachtragen.
+        autoFlushParkedArchive();
+      }
+      wasOfflineRef.current = offlineNow;
+    };
+    window.addEventListener('ps-connectivity', handler);
+    return () => window.removeEventListener('ps-connectivity', handler);
+  }, []);
 
   // ── SEITE 3 HTML-BUILDER ── Premium Sales Design ──
   const buildPage3Html = (inline = false) => {
@@ -30424,7 +30505,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.10"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.15"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -37948,7 +38029,21 @@ function __PS_startAuthGate(startAppFn) {
     // der normale Weg (erst E-Mail bestätigen) als auch der Admin-Vorrang-
     // Weg unten (Profil ist schon freigegeben) hierher führen können.
     function proceedToProfileGate() {
-      user.getIdToken(true).then(function () {
+      // v55.12: getIdToken(true) erzwingt einen Server-Refresh (Sicherheits-
+      // Check: ein gerade gesperrter Zugang soll schnell auffliegen). Ohne
+      // Internet haengt/scheitert das aber, und OHNE Fallback blieb die App
+      // dann auf einem leeren/ladenden Bildschirm haengen - genau in dem
+      // Moment, in dem "trotzdem weiterarbeiten koennen" am wichtigsten waere.
+      // Deshalb: bei Fehlschlag NICHT blockieren, sondern mit der bereits
+      // vorhandenen (lokal zwischengespeicherten) Anmeldung weitermachen.
+      // v55.15: War kurz auf "48h seit letzter Pruefung" - falsch, das haette
+      // auch ein durchgehend ONLINE laufendes Geraet ausgeloggt, wenn es nur
+      // lange nicht neu geladen hat. Richtig: siehe ps_offline_since-Logik
+      // im Verbindungs-Check ganz oben in der Datei - die greift NUR nach
+      // einer durchgaengigen Offline-Phase von 48h+.
+      user.getIdToken(true).catch(function () {
+        return null;
+      }).then(function () {
         var isBootstrapAdmin = __psIsAdminEmail(user.email);
         var unsubscribeUserDoc = __psGetBetaDb().collection('users').doc(user.uid).onSnapshot(function (snap) {
           var d = snap.data();
