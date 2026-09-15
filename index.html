@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- ══════════════════════════════════════════════════════════════════════
-         KEIN HTML-CACHE  (v55.16-startfix-audit)
+         KEIN HTML-CACHE  (v55.17-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
          Update lief auf dem Tablet weiter die ALTE Version, Fehlerkorrekturen
          kamen nie an. Die CDN-Bibliotheken bleiben davon unberührt.
@@ -46,8 +46,15 @@
 
             if (scale <= 1.0) return; // nichts zu tun
 
-            // Viewport-Width so setzen dass Inhalt größer wirkt
-            var targetWidth = Math.round(shortSide / scale);
+            // v55.17: Bug gefunden - hier stand bisher "shortSide / scale",
+            // also IMMER die Hochkant-Breite, auch im Querformat. Im
+            // Querformat ist der Bildschirm aber tatsächlich "longSide"
+            // breit - der Viewport wurde dadurch viel zu schmal gesetzt
+            // (verzerrte/zu große Darstellung). Jetzt: die GERADE AKTUELLE
+            // Breite (w) verwenden, die Größenklasse (scale) bleibt weiter
+            // unabhängig von der Ausrichtung anhand der kurzen Seite bestimmt.
+            var currentWidth = w;
+            var targetWidth = Math.round(currentWidth / scale);
             var vp = document.querySelector('meta[name="viewport"]');
             if (vp) {
                 vp.setAttribute('content',
@@ -225,12 +232,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.16';
+        manifestLink.href = 'manifest.webmanifest?v=55.17';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.16').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.17').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -357,7 +364,7 @@
     </script>
 
     <!-- ══════════════════════════════════════════════════════════════════════
-         VERSION + CACHE-BUSTING  (v55.16)
+         VERSION + CACHE-BUSTING  (v55.17)
          ──────────────────────────────────────────────────────────────────────
          Android/Chrome hält HTML von GitHub Pages sehr hartnäckig im Cache.
          Ohne diesen Block sieht der Mitarbeiter nach einem Update weiterhin
@@ -30505,7 +30512,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.16"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.17"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
