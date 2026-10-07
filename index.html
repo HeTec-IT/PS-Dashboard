@@ -372,7 +372,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.8.0';
+    window.APP_VERSION = '55.8.1';
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -12136,6 +12136,24 @@ const TvPriceModal = ({
   const [pinned, setPinned] = useState([]);
   const [pinLimitHint, setPinLimitHint] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  // v55.8.1: o2-TV-Preise automatisch aus tv-preise.json (GitHub Action holt sie täglich von o2online.de).
+  // Fehlt die Datei oder ist sie ungültig, gelten die fest hinterlegten Preise unten.
+  const [o2Live, setO2Live] = useState(window.__o2TvPreise ? window.__o2TvPreise.daten : null);
+  useEffect(() => {
+    if (!isOpen) return;
+    const c = window.__o2TvPreise;
+    if (c && Date.now() - c.zeit < 6 * 3600 * 1000) return;
+    let aktiv = true;
+    fetch('tv-preise.json?t=' + Date.now(), { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d || !d.o2 || !d.o2.preise) return;
+        window.__o2TvPreise = { zeit: Date.now(), daten: d.o2 };
+        if (aktiv) setO2Live(d.o2);
+      })
+      .catch(() => {});
+    return () => { aktiv = false; };
+  }, [isOpen]);
   const longPressTimer = React.useRef(null);
   const pinFiredRef = React.useRef(false);
   const startLongPress = entry => {
@@ -12401,6 +12419,17 @@ const TvPriceModal = ({
       recommended: 'm'
     }
   };
+  if (o2Live && o2Live.preise) {
+    const lp = o2Live.preise;
+    const ids = ['classic', 'smart', 'prem', 'prempro'];
+    if (ids.every(k => typeof lp[k] === 'number' && lp[k] > 0 && lp[k] < 100)) {
+      const o2d = providerData.o2;
+      ids.forEach(k => { o2d.rows[0].tarif[k] = lp[k]; o2d.totals[k] = lp[k]; });
+      const fmt = n => n.toFixed(2).replace('.', ',');
+      o2d.rows[0].range = fmt(lp.classic) + '–' + fmt(lp.prempro) + ' €';
+      if (o2Live.geprueft) o2d.preisStand = o2Live.geprueft;
+    }
+  }
   const pd = providerData[provider];
   const activeCol = selectedCol || pd.recommended;
   const prevTotal = parse(prevTV) + parse(prevHD) + parse(prevStream);
@@ -12676,7 +12705,9 @@ const TvPriceModal = ({
       letterSpacing: '0.1em',
       marginBottom: '6px'
     }
-  }, pd.tagline), /*#__PURE__*/React.createElement("div", {
+  }, pd.tagline, pd.preisStand && /*#__PURE__*/React.createElement("span", {
+    style: { marginLeft: '8px', fontWeight: 600, color: '#94a3b8', textTransform: 'none', letterSpacing: 0 }
+  }, '· Preise o2online.de, Stand ' + pd.preisStand)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
