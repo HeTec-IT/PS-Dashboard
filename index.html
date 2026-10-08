@@ -3,6 +3,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>/* Kunden-Download (QR) */
+(function () {
+  try {
+    var m = /[?&]dl=([a-f0-9]{32})(?:&|$)/.exec(location.search);
+    if (!m) return;
+    var id = m[1];
+    var cfg = { apiKey: "AIzaSyD0z1CX9vcdRQPtIo9pCjZ7Xs1h6dLl_8w", authDomain: "o2-pencil-selling.firebaseapp.com", projectId: "o2-pencil-selling", storageBucket: "o2-pencil-selling.firebasestorage.app", messagingSenderId: "347119579425", appId: "1:347119579425:web:afbb0b60fe6a266627ce60" };
+    var page = '<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Ihr Formular – Download</title>' +
+      '<style>body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f0f6ff;color:#0b1e42;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}' +
+      '.c{background:#fff;border-radius:18px;box-shadow:0 8px 30px rgba(0,30,90,.15);padding:28px 24px;max-width:420px;width:100%;text-align:center}' +
+      'h1{font-size:20px;margin:0 0 6px}p{color:#475569;font-size:14px;margin:6px 0 18px}' +
+      'a.b{display:block;background:#0b3ccf;color:#fff;text-decoration:none;font-weight:800;padding:16px;border-radius:12px;font-size:16px;margin:10px 0}a.s{background:#fff;color:#0b3ccf;border:2px solid #0b3ccf}' +
+      'body>:not(.c):not(script){display:none!important}.e{color:#b91c1c;font-weight:700}.sp{width:36px;height:36px;border:4px solid #dbeafe;border-top-color:#0b3ccf;border-radius:50%;animation:r 1s linear infinite;margin:14px auto}@keyframes r{to{transform:rotate(360deg)}}</style></head>' +
+      '<body><div class="c"><h1>Ihr ausgefülltes Formular</h1><p>Interne Rufnummernmitnahme</p><div id="o"><div class="sp"></div><p>Wird geladen …</p></div></div>' +
+      '<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"><\/script>' +
+      '<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"><\/script>' +
+      '<script>(async function(){var o=document.getElementById("o");function err(t){o.innerHTML=\'<p class="e">\'+t+"</p>"}' +
+      'try{var app=firebase.initializeApp(' + JSON.stringify(cfg) + ',"dl");var db=firebase.firestore(app);var id=' + JSON.stringify(id) + ';' +
+      'var first=await db.collection("portierung_files").doc(id+"-0").get();if(!first.exists){return err("Dieser Link ist abgelaufen oder wurde gelöscht. Bitte lassen Sie sich den Code im Shop neu erstellen.")}' +
+      'var f=first.data(),n=f.n||1,parts=[f.d];for(var i=1;i<n;i++){var s=await db.collection("portierung_files").doc(id+"-"+i).get();if(!s.exists){return err("Datei unvollständig – bitte Code neu erstellen lassen.")}parts.push(s.data().d)}' +
+      'var bin=atob(parts.join(""));var u=new Uint8Array(bin.length);for(var k=0;k<bin.length;k++)u[k]=bin.charCodeAt(k);' +
+      'var blob=new Blob([u],{type:"application/pdf"});var url=URL.createObjectURL(blob);' +
+      'o.innerHTML=\'<a class="b" href="\'+url+\'" download="Rufnummernmitnahme.pdf">⬇ PDF herunterladen</a><a class="b s" href="\'+url+\'" target="_blank" rel="noopener">👁 PDF ansehen</a><p>Der Link ist 24 Stunden gültig.</p>\';' +
+      '}catch(e){err("Laden nicht möglich. Bitte Internetverbindung prüfen und erneut versuchen.")}})();<\/script></body></html>';
+    window.__PS_DL_MODE = true;
+    document.open(); document.write(page); document.close();
+  } catch (e) {}
+})();
+
+</script>
     <!-- ══════════════════════════════════════════════════════════════════════
          KEIN HTML-CACHE  (v55.17-startfix-audit)
          Android/Chrome hielt diese Datei sonst tagelang im Cache: nach einem
@@ -6929,29 +6959,41 @@ function psPortExtractSim(txt, strict) {
   return cands.find(s => s.length === 18 || s.length === 19) || '';
 }
 // ── QR-Download: PDF kurz in Firebase Storage legen, Link als QR-Code zeigen ──
+function psPortDb() {
+  const app = window.__psGetBetaApp && window.__psGetBetaApp();
+  if (!app || !window.firebase) throw new Error('Firebase nicht verfügbar');
+  return { app, db: window.firebase.firestore(app) };
+}
+async function psPortDelete(ids) {
+  const { db } = psPortDb();
+  for (const i of ids) { try { await db.collection('portierung_files').doc(i).delete(); } catch (e) {} }
+}
 function psPortCleanup() {
   try {
-    const app = window.__psGetBetaApp && window.__psGetBetaApp();
     const raw = JSON.parse(localStorage.getItem('ps_port_uploads') || '[]'), keep = [], now = Date.now();
-    raw.forEach(it => {
-      if (now - it.ts > 24 * 3600 * 1000) { try { app.storage().ref(it.path).delete().catch(() => {}); } catch (e) {} } else keep.push(it);
-    });
+    raw.forEach(it => { if (now - it.ts > 24 * 3600 * 1000) { psPortDelete(it.ids || []).catch(() => {}); } else keep.push(it); });
     localStorage.setItem('ps_port_uploads', JSON.stringify(keep));
   } catch (e) {}
 }
+// PDF in Firestore ablegen (Teilstücke à 600 KB), Kunde lädt per Link ?dl=ID
 async function psPortUpload(blob) {
-  if (!window.__psGetBetaApp || !window.firebase) throw new Error('Firebase nicht verfügbar');
-  await psPortLoadScript('https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js');
-  const app = window.__psGetBetaApp();
+  const { app, db } = psPortDb();
   if (!app.auth().currentUser) throw new Error('Nicht angemeldet');
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  const b64 = btoa(bin), CH = 600000, n = Math.ceil(b64.length / CH);
   const rnd = new Uint8Array(16); (window.crypto || window.msCrypto).getRandomValues(rnd);
-  const id = Array.from(rnd).map(b => ('0' + b.toString(16)).slice(-2)).join('');
-  const path = 'portierung/' + id + '/Rufnummernmitnahme.pdf';
-  const ref = app.storage().ref(path);
-  await ref.put(blob, { contentType: 'application/pdf' });
-  const url = await ref.getDownloadURL();
-  try { const l = JSON.parse(localStorage.getItem('ps_port_uploads') || '[]'); l.push({ path, ts: Date.now() }); localStorage.setItem('ps_port_uploads', JSON.stringify(l)); } catch (e) {}
-  return { url, path };
+  const id = Array.from(rnd).map(x => ('0' + x.toString(16)).slice(-2)).join('');
+  const ids = [];
+  try {
+    for (let i = 0; i < n; i++) {
+      await db.collection('portierung_files').doc(id + '-' + i).set({ n, i, d: b64.slice(i * CH, (i + 1) * CH), ts: window.firebase.firestore.FieldValue.serverTimestamp() });
+      ids.push(id + '-' + i);
+    }
+  } catch (e) { psPortDelete(ids).catch(() => {}); throw e; }
+  try { const l = JSON.parse(localStorage.getItem('ps_port_uploads') || '[]'); l.push({ ids, ts: Date.now() }); localStorage.setItem('ps_port_uploads', JSON.stringify(l)); } catch (e) {}
+  const base = location.origin + location.pathname;
+  return { url: base + '?dl=' + id, ids };
 }
 function PsPortQr(props) {
   const h = React.createElement;
@@ -6961,7 +7003,7 @@ function PsPortQr(props) {
   React.useEffect(() => {
     let dead = false;
     (async () => {
-      try { const r = await psPortUpload(props.blob); if (!dead) setSt({ url: r.url, path: r.path }); }
+      try { const r = await psPortUpload(props.blob); if (!dead) setSt({ url: r.url, ids: r.ids }); }
       catch (e) { console.error('[PORT]', e); if (!dead) setSt({ err: (e && (e.code || e.message)) ? String(e.code || e.message) : 'Upload fehlgeschlagen' }); }
     })();
     return () => { dead = true; };
@@ -6975,8 +7017,8 @@ function PsPortQr(props) {
     for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) x.fillRect((k + 4) * cell, (r + 4) * cell, cell, cell);
   }, [st.url]);
   const kill = async () => {
-    try { await window.__psGetBetaApp().storage().ref(st.path).delete(); } catch (e) {}
-    try { const l = JSON.parse(localStorage.getItem('ps_port_uploads') || '[]').filter(i => i.path !== st.path); localStorage.setItem('ps_port_uploads', JSON.stringify(l)); } catch (e) {}
+    try { await psPortDelete(st.ids); } catch (e) {}
+    try { const l = JSON.parse(localStorage.getItem('ps_port_uploads') || '[]').filter(i => (i.ids || [])[0] !== st.ids[0]); localStorage.setItem('ps_port_uploads', JSON.stringify(l)); } catch (e) {}
     setGone(true);
   };
   const copy = async () => { try { await navigator.clipboard.writeText(st.url); } catch (e) {} };
@@ -6984,7 +7026,7 @@ function PsPortQr(props) {
     h('div', { className: 'bg-white rounded-2xl shadow-2xl p-5 w-full text-center', style: { maxWidth: 460 } },
       h('div', { className: 'text-lg font-black text-[#0b1e42] mb-1' }, '📱 PDF zum Download für den Kunden'),
       st.busy && h('div', { className: 'py-10 text-sm font-bold text-slate-500' }, 'PDF wird hochgeladen …'),
-      st.err && h('div', { className: 'py-4 text-sm font-bold text-red-600' }, 'Upload nicht möglich (' + st.err + '). Bitte Internet prüfen bzw. Firebase-Storage-Regel für „portierung/“ freigeben.'),
+      st.err && h('div', { className: 'py-4 text-sm font-bold text-red-600' }, 'Upload nicht möglich (' + st.err + '). Bitte Internet prüfen bzw. Firestore-Regel für „portierung_files“ eintragen.'),
       st.url && !gone && h('div', null,
         h('div', { className: 'text-xs text-slate-500 mb-2' }, 'Kunde scannt den Code mit der Handy-Kamera und lädt das ausgefüllte Formular herunter.'),
         h('canvas', { ref: cv, className: 'mx-auto rounded-xl border border-slate-200', style: { width: 'min(80vw, 340px)', height: 'min(80vw, 340px)' } }),
@@ -41370,7 +41412,7 @@ function __PS_startAuthGate(startAppFn) {
   });
 }
 
-__PS_startAuthGate(__startPencilAppWhenReady);
+if (!window.__PS_DL_MODE) __PS_startAuthGate(__startPencilAppWhenReady);
 
 // === v24: Bundle-Laufzeit Dropdown/Badge sichtbar machen (Tailwind-Klassen fehlen im Pencil-Selling) ===
 (function () {
