@@ -3883,7 +3883,7 @@ html.device-android-tablet .sit-aside-panel {
             try {
                 var id = Date.now().toString(36) + Math.random().toString(36).slice(2,5);
                 var sessions = JSON.parse(localStorage.getItem(SESSION_KEY) || '[]');
-                sessions.push({id:id, startTs:Date.now(), status:'gestartet', agent:agent, uid:uid||'', beratungsId:beratungsId||''});
+                sessions.push({id:id, startTs:Date.now(), status:'gestartet', seite2:true, agent:agent, uid:uid||'', beratungsId:beratungsId||''});
                 localStorage.setItem(SESSION_KEY, JSON.stringify(sessions));
                 return id;
             } catch(e) { return null; }
@@ -3906,6 +3906,8 @@ html.device-android-tablet .sit-aside-panel {
                 var now = Date.now();
                 var remaining = [];
                 sessions.forEach(function(s) {
+                    // Altlasten: Sessions aus frueheren Versionen (Start beim App-Oeffnen, ohne Seite-2-Wechsel) verwerfen
+                    if (!s.seite2) return;
                     var age = now - (s.startTs || 0);
                     if (s.status === 'gestartet' && age > SESSION_TTL_MS) {
                         // Log as abandoned
@@ -7394,6 +7396,7 @@ function InternePortierungModal(props) {
   const [qrOpen, setQrOpen] = React.useState(false);
   React.useEffect(() => { psPortCleanup(); }, []);
   const [penBytes, setPenBytes] = React.useState(null);
+  const tracked = React.useRef({});
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState('');
   const [res, setRes] = React.useState(null); // { url, blob, name, art }
@@ -7459,6 +7462,7 @@ function InternePortierungModal(props) {
     setBusy(false);
   };
   const showResult = (bytes) => {
+    try { if (props.onTrack && !tracked.current[art]) { tracked.current[art] = 1; props.onTrack(art === 'mobil' ? 'portierungMobil' : 'portierungDsl'); } } catch (e) {}
     try {
       const blob = new Blob([bytes], { type: 'application/pdf' });
       const nach = (f.nachname || 'Kunde').replace(/[^\wäöüÄÖÜß-]+/g, '_');
@@ -17788,6 +17792,8 @@ const StatsModal = ({
   const [activeTab, setActiveTab] = useState(employeeMode ? 'coaching' : 'uebersicht');
   const [skipAgentsData, setSkipAgentsData] = useState({}); // { agentName: {count, limit} }
   const [range, setRange] = useState('31');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
   const isDiegoAdmin = !employeeMode && PS_IS_ADMIN();
 
   // Im Mitarbeiter-Modus IMMER auf den eigenen Namen gesperrt
@@ -17848,6 +17854,19 @@ const StatsModal = ({
   const filtered = useMemo(() => {
     const base = selectedAgent === '__all__' ? rows : rows.filter(r => resolveUserName(r.user) === selectedAgent);
     if (range === 'all') return base;
+    if (range === 'custom') {
+      const ymd = t => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      return base.filter(r => {
+        const t = new Date(r.ts).getTime();
+        if (!Number.isFinite(t)) return false;
+        const k = ymd(t);
+        return (!rangeFrom || k >= rangeFrom) && (!rangeTo || k <= rangeTo);
+      });
+    }
+    if (range === 'today') {
+      const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+      return base.filter(r => { const t = new Date(r.ts).getTime(); return Number.isFinite(t) && t >= d0.getTime(); });
+    }
     const days = parseInt(range, 10);
     const now = Date.now();
     const maxAge = days * 24 * 60 * 60 * 1000;
@@ -17855,7 +17874,7 @@ const StatsModal = ({
       const t = new Date(r.ts).getTime();
       return Number.isFinite(t) && now - t <= maxAge;
     });
-  }, [rows, selectedAgent, range]);
+  }, [rows, selectedAgent, range, rangeFrom, rangeTo]);
   const IST_KEYS = [{
     key: 'sit_Kundenname',
     label: 'Kundenname'
@@ -18305,6 +18324,9 @@ const StatsModal = ({
       flexWrap: 'wrap'
     }
   }, [{
+    id: 'today',
+    label: 'Heute'
+  }, {
     id: '7',
     label: '7T'
   }, {
@@ -18319,6 +18341,9 @@ const StatsModal = ({
   }, {
     id: 'all',
     label: 'Gesamt'
+  }, {
+    id: 'custom',
+    label: '📅 Zeitraum'
   }].map(r => /*#__PURE__*/React.createElement("button", {
     key: r.id,
     onClick: () => setRange(r.id),
@@ -18332,7 +18357,23 @@ const StatsModal = ({
       color: range === r.id ? '#fff' : '#64748b',
       cursor: 'pointer'
     }
-  }, r.label))), !employeeMode && /*#__PURE__*/React.createElement("div", {
+  }, r.label)), range === 'custom' ? /*#__PURE__*/React.createElement("label", {
+    style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#64748b' }
+  }, "Von", /*#__PURE__*/React.createElement("input", {
+    type: 'date',
+    value: rangeFrom,
+    max: rangeTo || undefined,
+    onChange: e => { setRangeFrom(e.target.value); setRange('custom'); },
+    style: { padding: '4px 6px', borderRadius: '8px', border: '1.5px solid #2563eb', fontSize: '12px', color: '#1e293b', background: '#fff' }
+  })) : null, range === 'custom' ? /*#__PURE__*/React.createElement("label", {
+    style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#64748b' }
+  }, "Bis", /*#__PURE__*/React.createElement("input", {
+    type: 'date',
+    value: rangeTo,
+    min: rangeFrom || undefined,
+    onChange: e => { setRangeTo(e.target.value); setRange('custom'); },
+    style: { padding: '4px 6px', borderRadius: '8px', border: '1.5px solid #2563eb', fontSize: '12px', color: '#1e293b', background: '#fff' }
+  })) : null), !employeeMode && /*#__PURE__*/React.createElement("div", {
     style: {
       marginLeft: 'auto',
       display: 'flex',
@@ -24875,6 +24916,7 @@ function App() {
     try { setReferralPdfBereit(false); setReferralStep1Done(false); } catch (_) {}
     try { archiveSentRef.current = false; archiveInFlightRef.current = false; } catch (_) {}
     try { analyticsLoggedRef.current = false; analyticsRowIdRef.current = null; } catch (_) {}
+    try { sessionIdRef.current = null; } catch (_) {}
     if (!keepOfferLinks) {
       setLoadedOfferId(null);
       setSessionOfferId(null);
@@ -25343,13 +25385,18 @@ function App() {
 
   // Session tracking via window globals (plain JS, no Babel issues)
   var sessionIdRef = React.useRef(null);
-  React.useEffect(function () {
-    if (window.psStartSession) {
+  // BERATUNG zaehlt AUSSCHLIESSLICH beim erfolgreichen Wechsel von Seite 1 auf Seite 2
+  // (Zum Angebot ODER Ueberspringen). App oeffnen, Archiv, Statistik, Portierungsformular
+  // und andere Hilfsmittel starten KEINE Beratung. Idempotent: pro Beratung nur einmal;
+  // erst resetCustomerState (echter Neustart) setzt sessionIdRef zurueck.
+  function startBeratungSession() {
+    try {
+      if (sessionIdRef.current || !window.psStartSession) return;
       var agent = window.__PS_PROFILE_NAME || window.__LINK_EMPLOYEE || 'Unbekannt';
       var uid = window.__PS_USER_UID || '';
       sessionIdRef.current = window.psStartSession(agent, '', uid);
-    }
-  }, []);
+    } catch (e) {}
+  }
 
   // === Inhalterkennung Offer-Canvas (Status nur bei Inhalt erforderlich) ===
   // === Inhalterkennung Offer-Canvas (wichtig: auch nach Radieren korrekt) ===
@@ -26423,6 +26470,8 @@ function App() {
         })
       });
       analyticsLoggedRef.current = true;
+      // Angebot-Pfad: Session mit schliessen, sonst entsteht nach 2h zusaetzlich ein 'Abgebrochen' (Doppelzaehlung)
+      try { if (window.psCloseSession) window.psCloseSession(sessionIdRef.current); } catch (_) {}
     } catch (e) {/* ignore */}
     try {
       const _slug = new URLSearchParams(window.location.search || '').get('m') || '';
@@ -26721,6 +26770,7 @@ function App() {
     }
     setSkipReason(reasonData);
     setShowSkipReasonModal(false);
+    startBeratungSession();
     setView('offer');
     setViewOfferCounter(c => c + 1);
     if (isHandyFinanzierung) {
@@ -34092,6 +34142,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       rufnummer: (() => { try { return (textData?.Rufnummer || '').toString(); } catch (e) { return ''; } })(),
       geschaeft: (() => { try { return /gesch|gewerb|business|b2b/i.test(String(customerType || '')); } catch (e) { return false; } })()
     },
+    onTrack: t => { try { trackToolUsage(t); } catch (e) {} },
     onClose: () => setPortierungOpen(false)
   }), document.body), shareSheet && ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
     style: {
@@ -39806,6 +39857,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
   }, "Überspringen"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (isFormValid) {
+        startBeratungSession();
         setView('offer');
         setViewOfferCounter(c => c + 1);
       } else {
