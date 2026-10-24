@@ -402,7 +402,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.8.1';
+    window.APP_VERSION = '55.14.0';
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -21889,6 +21889,31 @@ const RufnummerOrParkModal = ({
   }, "Abbrechen")))));
 };
 
+// v55.14: Einheitliche Schreibweise des Kundennamens im Archiv: "Vorname Nachname".
+// "Nachname, Vorname" wird umgestellt, jedes Wort beginnt groß (Namenszusätze wie van/von bleiben klein), GROSSBUCHSTABEN werden normalisiert.
+const PS_NAME_PARTIKEL = ['van', 'von', 'vom', 'der', 'den', 'de', 'di', 'da', 'zu', 'zur', 'ter', 'ten', 'le', 'la', 'el', 'al', 'bin', 'ibn', 'dos', 'das', 'do'];
+const psNormKundenname = s => {
+  try {
+    let v = String(s == null ? '' : s).replace(/[|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
+    const c = v.indexOf(',');
+    if (c > 0 && v.indexOf(',', c + 1) === -1) {
+      const nach = v.slice(0, c).trim(), vor = v.slice(c + 1).trim();
+      if (nach && vor) v = vor + ' ' + nach; // "Mustermann, Max" → "Max Mustermann"
+    }
+    v = v.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+    return v.split(' ').map((w, i) => {
+      if (!w) return w;
+      if (i > 0 && PS_NAME_PARTIKEL.indexOf(w.toLowerCase()) !== -1) return w.toLowerCase();
+      return w.split('-').map(p => {
+        if (p.length > 1 && p === p.toUpperCase() && p !== p.toLowerCase()) p = p.toLowerCase();
+        return p.charAt(0).toUpperCase() + p.slice(1);
+      }).join('-');
+    }).join(' ');
+  } catch (e) {
+    return String(s || '');
+  }
+};
+
 // ── v57: KUNDENNAME-POPUP (nur beim ANGEBOT, ohne Unterschrift) ──
 // Hintergrund: Beim Abschluss haben wir die Rufnummer. Beim reinen Angebot nicht –
 // und der Kundenname steht nur handschriftlich auf dem Canvas, ist also nicht
@@ -21900,7 +21925,17 @@ const KundennameModal = ({
   defaultValue = ''
 }) => {
   const [val, setVal] = React.useState(defaultValue || '');
+  const [frage, setFrage] = React.useState(false); // v55.14: Rückfrage, wenn nur ein Wort eingegeben wurde
   const ok = val.trim().length >= 2;
+  const einWort = ok && String(val).trim().split(/[\s,]+/).filter(Boolean).length === 1;
+  const weiter = () => {
+    if (!ok) return;
+    if (einWort && !frage) {
+      setFrage(true);
+      return;
+    }
+    onSubmit(val.trim());
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
@@ -21955,8 +21990,11 @@ const KundennameModal = ({
     type: "text",
     autoFocus: true,
     value: val,
-    onChange: e => setVal(e.target.value),
-    placeholder: "z.B. Mustermann, Max",
+    onChange: e => {
+      setVal(e.target.value);
+      setFrage(false);
+    },
+    placeholder: "Vorname Nachname (z. B. Max Mustermann)",
     autoComplete: "off",
     autoCapitalize: "words",
     style: {
@@ -21970,11 +22008,64 @@ const KundennameModal = ({
       boxSizing: 'border-box'
     },
     onKeyDown: e => {
-      if (e.key === 'Enter' && ok) onSubmit(val.trim());
+      if (e.key === 'Enter' && ok) weiter();
     }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => ok && onSubmit(val.trim()),
-    disabled: !ok,
+  }), frage && einWort && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '12px',
+      borderRadius: '12px',
+      background: '#fffbeb',
+      border: '1px solid #fcd34d',
+      marginBottom: '12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '13px',
+      fontWeight: 800,
+      color: '#92400e',
+      marginBottom: '4px'
+    }
+  }, '„' + val.trim() + '“ – ist das der Nachname?'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '11px',
+      color: '#92400e',
+      marginBottom: '10px',
+      lineHeight: 1.35
+    }
+  }, "Nur ein Vorname reicht nicht: Das Angebot ist später sonst schwer wiederzufinden."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '8px'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => onSubmit(val.trim()),
+    style: {
+      flex: 1,
+      padding: '11px 8px',
+      borderRadius: '10px',
+      border: 'none',
+      background: 'linear-gradient(135deg,#16a34a,#15803d)',
+      color: '#fff',
+      fontWeight: 900,
+      fontSize: '13px',
+      cursor: 'pointer'
+    }
+  }, "Ja, Nachname"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setFrage(false),
+    style: {
+      flex: 1,
+      padding: '11px 8px',
+      borderRadius: '10px',
+      border: '2px solid #cbd5e1',
+      background: '#fff',
+      color: '#334155',
+      fontWeight: 900,
+      fontSize: '13px',
+      cursor: 'pointer'
+    }
+  }, "Nein, ergänzen"))), /*#__PURE__*/React.createElement("button", {
+    onClick: weiter,
+    disabled: !ok || frage && einWort,
     style: {
       width: '100%',
       padding: '14px',
@@ -21985,6 +22076,7 @@ const KundennameModal = ({
       fontWeight: 900,
       fontSize: '15px',
       cursor: ok ? 'pointer' : 'not-allowed',
+      opacity: frage && einWort ? 0.45 : 1,
       marginBottom: '10px'
     }
   }, "✅ Weiter & PDF erstellen"), /*#__PURE__*/React.createElement("div", {
@@ -22010,7 +22102,7 @@ const KundennameModal = ({
       lineHeight: 1.35,
       fontWeight: 600
     }
-  }, "Nachname reicht. Das Datum wird automatisch ergänzt – so findest du das Angebot später sofort wieder.")), /*#__PURE__*/React.createElement("button", {
+  }, "Vor- und Nachname (Max Mustermann). Nur der Nachname reicht, ein einzelner Vorname nicht. Das Datum wird automatisch ergänzt – so findest du das Angebot später sofort wieder.")), /*#__PURE__*/React.createElement("button", {
     onClick: onCancel,
     style: {
       width: '100%',
@@ -22260,14 +22352,1392 @@ const ParkedArchiveModal = ({
   }, busyId === entry.id ? '…' : 'Senden')))))));
 };
 
+// ══════════════════════════════════════════════════════════════════════════
+// v55.10: PENCIL SELLING – KUNDENSUCHE (gespeicherte Angebote + PDF-Archiv)
+// ──────────────────────────────────────────────────────────────────────────
+// Eine Suche, zwei Quellen:
+//   1) Angebote der letzten 30 Tage  → Firestore "saved_offers" (unverändert, cloudListOffers)
+//   2) archivierte PDFs              → Firestore "pdf_index" (kleiner Suchindex, NUR Metadaten)
+// Das PDF selbst liegt weiterhin ausschließlich im SharePoint-Archiv. Zum Öffnen
+// holt die App es über den Power-Automate-Flow "Pencil Archiv" (PENCIL_ARCHIV_FLOW_URL).
+//
+// Suchindex "pdf_index" (ein Dokument pro archivierter Datei, Dokument-ID = Dateiname):
+//   fileName, typ, shopId, kunde, ruf, nsn, datum, agent, ts, keys[], offerId, src, uid
+//   - wird NACH erfolgreicher Übergabe an den Archiv-Flow geschrieben (dispatchArchiveMail)
+//   - ältere PDFs: einmaliger Admin-Import über den Flow-Aufruf "list"
+//   - Berechtigung: Firestore-Regeln (serverseitig) + zusätzlich Filter in der App
+//   - ändert weder Dateinamen noch Archivierung noch PDF-Erstellung
+//
+// Flow "Pencil Selling PDF Archiv API V3" (POST, text/plain, JSON, Antwort mit Access-Control-Allow-Origin):
+//   jede Anfrage trägt { action, idToken }  (Firebase-Login des Benutzers, KEIN Shop-Parameter als Berechtigung)
+//   status → { }                              → { ok, verified, admin, shops[], checks:{token,profile,library} }
+//   get    → { name }                         → { ok, name, b64 }
+//   list   → { afterId, limit }  (nur Admin)  → { ok, items:[{id,name,modified}], lastId, done }
+//   Fehler → HTTP 401/403/404 mit { ok:false, error:'auth'|'forbidden'|'notfound' }
+// v55.11: 401/403/404 OHNE diese App-Antwort stammen vom Dienst davor (abgelaufene Signatur, Flow aus) → Code "gateway".
+//         Das Login-Token geht nur an Power-Automate-Adressen (psArchUrlOk). Bei "auth" wird einmal mit
+//         erneuertem Token wiederholt. Die Berechtigung entscheidet allein der Flow (Token + Profil), nie die App.
+// ══════════════════════════════════════════════════════════════════════════
+const psArchNorm = s => String(s == null ? '' : s).toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+// Rufnummer → eindeutige Kernnummer (ohne 0 / +49 / 0049). Fremdländer: 'i' + Ziffern.
+const psArchNsn = s => {
+  s = String(s == null ? '' : s).trim();
+  let intl = /^\+/.test(s);
+  let d = s.replace(/\D/g, '');
+  if (!intl && /^00/.test(d)) {
+    intl = true;
+    d = d.slice(2);
+  }
+  if (intl) {
+    if (/^49/.test(d)) return d.slice(2).replace(/^0+/, '');
+    return 'i' + d;
+  }
+  if (/^49/.test(d) && d.length >= 12) return d.slice(2).replace(/^0+/, '');
+  return d.replace(/^0+/, '');
+};
+
+// Eingabe → Suchart.
+//   name : jedes eingegebene Wort muss ein Namensanfang sein (Vorname, Nachname, Teilname)
+//   phone: Rufnummer (ab 7 Ziffern), findet auch noch unvollständig getippte Nummern
+//   key  : Suchschlüssel für den Index (längstes Wort bzw. Nummer)
+const psArchParseQuery = raw => {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return { mode: 'empty', hint: '' };
+  if (/^[+()\d\s\-\/.]+$/.test(s) && /\d/.test(s)) {
+    const nsn = psArchNsn(s);
+    if (nsn.replace(/\D/g, '').length >= 7) {
+      return { mode: 'phone', nsn, key: 'p:' + nsn.slice(0, 16), hint: '' };
+    }
+    return { mode: 'short', hint: 'Bitte mindestens 7 Ziffern der Rufnummer eingeben.' };
+  }
+  const tokens = psArchNorm(s).split(' ').filter(Boolean).slice(0, 5);
+  const longest = tokens.slice().sort((a, b) => b.length - a.length)[0] || '';
+  if (longest.length < 3) return { mode: 'short', hint: 'Bitte mindestens 3 Zeichen des Namens eingeben.' };
+  return { mode: 'name', tokens, key: 'n:' + longest.slice(0, 12), hint: '' };
+};
+
+// Dateiname (alt oder neu) → Felder. Reihenfolge der Teile ist egal.
+//   PENCIL_[Kunde]_[Shop]_Angebot_[Datum].pdf     (neu)
+//   PENCIL_[Shop]_Angebot_[Datum]_[Kunde].pdf     (alt)
+//   PENCIL_[Rufnummer]_[Shop]_Abschluss_[Datum].pdf
+const psArchParseFile = (name, shopIds) => {
+  const base = String(name || '').replace(/\.pdf$/i, '');
+  const parts = base.split('_').filter(Boolean);
+  const shops = shopIds || [];
+  let typ = '', datum = '', shopId = '', phone = '';
+  const rest = [];
+  // v55.11: In ALLEN Namensschemata steht der Standort direkt VOR "Angebot"/"Abschluss" (gefolgt vom Datum).
+  // Nur dieser Teil zählt als Standort – so wird eine Datei nicht fremdem Standort zugeordnet, nur weil der
+  // Kundenname zufällig wie ein Standort heißt. Ohne eindeutige Stelle gilt wie bisher der erste passende Teil.
+  let anchorIdx = -1;
+  for (let i = 1; i < parts.length - 1; i++) {
+    if (/^(angebot|abschluss)$/i.test(parts[i]) && /^\d{4}-\d{2}-\d{2}$/.test(parts[i + 1])) {
+      anchorIdx = i;
+      break;
+    }
+  }
+  const anchorShop = anchorIdx > 0 ? psArchNorm(parts[anchorIdx - 1]).replace(/ /g, '-') : '';
+  const anchored = !!anchorShop && shops.indexOf(anchorShop) !== -1;
+  parts.forEach((p, i) => {
+    if (i === 0 && /^pencil$/i.test(p)) return;
+    const id = psArchNorm(p).replace(/ /g, '-');
+    if (/^angebot$/i.test(p)) { if (!typ) typ = 'angebot'; return; }
+    if (/^abschluss$/i.test(p)) { if (!typ) typ = 'abschluss'; return; }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(p)) { if (!datum) datum = p; return; }
+    if (/^\+?\d{7,}$/.test(p)) { if (!phone) phone = p; return; }
+    if (anchored) {
+      if (i === anchorIdx - 1) { shopId = anchorShop; return; }
+    } else if (!shopId && shops.indexOf(id) !== -1) { shopId = id; return; }
+    rest.push(p);
+  });
+  return {
+    kunde: rest.join(' ').replace(/-+/g, ' ').trim(),
+    phone,
+    shopId,
+    typ,
+    datum
+  };
+};
+const psArchDatum = (p, modified) => {
+  const iso = p && p.datum || String(modified || '').slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? m[3] + '.' + m[2] + '.' + m[1] : '';
+};
+
+const psArchErr = (code, fb) => {
+  const e = new Error(code);
+  e.code = code;
+  e.fb = fb || '';
+  return e;
+};
+const psArchErrText = e => {
+  const c = e && e.code || '';
+  if (c === 'network') return e && e.fb === 'fetch' ? 'Keine Verbindung zum PDF-Dienst. Bitte Internetverbindung prüfen und erneut versuchen. Bleibt es so, bitte den Administrator informieren (Flow-Adresse/Signatur).' : 'Keine Verbindung. Bitte Internetverbindung prüfen und erneut versuchen.';
+  if (c === 'timeout') return 'Das dauert zu lange. Bitte erneut versuchen.';
+  if (c === 'auth') return 'Anmeldung ungültig oder abgelaufen. Bitte die App neu öffnen bzw. erneut anmelden.';
+  if (c === 'forbidden') return 'Dafür fehlt die Berechtigung (Standort oder Zugang).';
+  if (c === 'notfound') return 'Die Datei wurde im Archiv nicht gefunden. Frisch archivierte Dateien brauchen manchmal 1–2 Minuten – bitte gleich noch einmal versuchen.';
+  if (c === 'badfile') return 'Die Datei konnte nicht vollständig geladen werden. Bitte erneut versuchen.';
+  if (c === 'noflow' && e.fb === 'badurl') return 'Die Adresse des PDF-Dienstes ist ungültig. Bitte den Administrator informieren.';
+  if (c === 'gateway') return 'Der PDF-Dienst hat die Anfrage abgelehnt (Flow-Adresse/Signatur abgelaufen?). Bitte die App neu öffnen. Bleibt es so, bitte den Administrator informieren.';
+  if (c === 'noflow') return 'Das PDF-Archiv ist noch nicht verbunden – Öffnen ist derzeit nicht möglich.';
+  return 'Das Archiv ist gerade nicht erreichbar. Bitte später erneut versuchen.';
+};
+// Nur "sicher offline" zählt (Browser meldet offline). Die 15-s-Ping-Heuristik der App kann sich irren
+// (z. B. bei Vorschau/Datei-Aufruf) und würde sonst die Suche fälschlich blockieren – Firestore und
+// Flow melden echte Verbindungsfehler selbst.
+const psArchOffline = () => {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    return !!window.__psArchForceOffline;
+  } catch (e) {
+    return false;
+  }
+};
+
+// ── Suchindex (Firestore "pdf_index") ────────────────────────────────────
+const PS_IDX_COLL = 'pdf_index';
+const PS_IDX_QUEUE_KEY = 'ps_idx_queue_v1';
+const psIdxDb = () => {
+  try {
+    return typeof getStatsDb === 'function' ? getStatsDb() : null;
+  } catch (e) {
+    return null;
+  }
+};
+// Dokument-ID = Dateiname (klein, nur sichere Zeichen) → gleiche Datei = gleiches Dokument, nie doppelt
+const psIdxId = fileName => String(fileName || '').toLowerCase().replace(/[^a-z0-9._+\-]/g, '_').slice(0, 180);
+
+// Suchschlüssel: Namensanfänge (3–12 Zeichen je Wort) und Rufnummern-Anfänge (ab 7 Stellen)
+const psIdxKeys = (kunde, nsn) => {
+  const keys = [];
+  psArchNorm(kunde).split(' ').filter(t => t.length >= 3).slice(0, 6).forEach(t => {
+    for (let n = 3; n <= Math.min(t.length, 12); n++) {
+      const k = 'n:' + t.slice(0, n);
+      if (keys.indexOf(k) === -1) keys.push(k);
+    }
+  });
+  const d = String(nsn || '');
+  if (d.replace(/\D/g, '').length >= 7) {
+    for (let n = 7; n <= Math.min(d.length, 16); n++) keys.push('p:' + d.slice(0, n));
+  }
+  return keys;
+};
+
+// Eintrag bauen (nur einfache Werte, nie undefined)
+const psIdxBuild = m => {
+  const typ = m.typ === 'abschluss' ? 'abschluss' : 'angebot';
+  const kunde = String(m.kunde || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const ruf = String(m.ruf || '').replace(/[^0-9+]/g, '').slice(0, 24);
+  const nsn = ruf ? psArchNsn(ruf) : '';
+  const datum = /^\d{4}-\d{2}-\d{2}$/.test(String(m.datum || '')) ? m.datum : new Date().toISOString().slice(0, 10);
+  const ts = typeof m.ts === 'number' && isFinite(m.ts) ? m.ts : Date.parse(datum + 'T12:00:00Z') || Date.now();
+  return {
+    fileName: String(m.fileName || '').slice(0, 180),
+    typ,
+    shopId: String(m.shopId || '').toLowerCase().slice(0, 40),
+    kunde,
+    ruf,
+    nsn,
+    datum,
+    agent: String(m.agent || '').slice(0, 40),
+    ts,
+    keys: psIdxKeys(kunde, nsn),
+    offerId: String(m.offerId || '').slice(0, 80),
+    src: m.src === 'import' ? 'import' : 'app',
+    uid: String(m.uid || '').slice(0, 64),
+    v: 1
+  };
+};
+
+// Eintrag aus einem vorhandenen Dateinamen (Import älterer PDFs). null = keine Pencil-Datei.
+const psIdxFromFile = (name, modified, shopIds) => {
+  if (!/^PENCIL_/i.test(String(name || '')) || !/\.pdf$/i.test(String(name || ''))) return null;
+  const p = psArchParseFile(name, shopIds);
+  if (!p.typ) return null;
+  const leer = v => /^(keinName|keineNr)$/i.test(String(v || '').trim()) ? '' : v;
+  return psIdxBuild({
+    fileName: name,
+    typ: p.typ,
+    shopId: p.shopId,
+    kunde: leer(p.kunde),
+    ruf: p.phone,
+    datum: p.datum || String(modified || '').slice(0, 10),
+    src: 'import'
+  });
+};
+
+// Wartende Einträge (z. B. wenn beim Archivieren gerade kein Netz war) – überleben ein Neuladen
+const psIdxQueueGet = () => {
+  try {
+    const a = JSON.parse(localStorage.getItem(PS_IDX_QUEUE_KEY) || '[]');
+    const alt = Date.now() - 14 * 86400000;
+    return Array.isArray(a) ? a.filter(x => x && x.fileName && (x.ts || 0) > alt) : [];
+  } catch (e) {
+    return [];
+  }
+};
+const psIdxQueueSet = a => {
+  try {
+    localStorage.setItem(PS_IDX_QUEUE_KEY, JSON.stringify(a.slice(-100)));
+  } catch (e) {}
+};
+const psIdxWriteOne = async (db, entry, timeoutMs) => {
+  let timer;
+  try {
+    await Promise.race([db.collection(PS_IDX_COLL).doc(psIdxId(entry.fileName)).set(entry), new Promise((_, rej) => {
+      timer = setTimeout(() => rej(psArchErr('timeout')), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+let __psIdxFlushing = null;
+// Schreibt alle wartenden Einträge. Fehler → Eintrag bleibt in der Warteschlange. Wirft nie.
+const psIdxFlush = async timeoutMs => {
+  if (__psIdxFlushing) return __psIdxFlushing;
+  __psIdxFlushing = (async () => {
+    let written = 0;
+    try {
+      const db = psIdxDb();
+      if (!db || psArchOffline()) return 0;
+      const done = new Set();
+      for (let guard = 0; guard < 200; guard++) {
+        const entry = psIdxQueueGet().find(x => x && x.fileName && !done.has(psIdxId(x.fileName)));
+        if (!entry) break;
+        done.add(psIdxId(entry.fileName));
+        try {
+          await psIdxWriteOne(db, entry, timeoutMs || 6000);
+          psIdxQueueSet(psIdxQueueGet().filter(x => psIdxId(x && x.fileName) !== psIdxId(entry.fileName)));
+          written++;
+        } catch (e) {
+          if (e && e.code === 'permission-denied') {
+            try { console.warn('[SUCHINDEX] Schreiben abgelehnt (Firestore-Regeln?)'); } catch (_) {}
+            continue; // dieser Eintrag bleibt gespeichert, die übrigen werden weiter versucht
+          }
+          break; // Netz/Zeitlimit: später erneut
+        }
+      }
+    } catch (e) {}
+    return written;
+  })();
+  try {
+    return await __psIdxFlushing;
+  } finally {
+    __psIdxFlushing = null;
+  }
+};
+
+// Kontext vom Archivier-Ablauf (Kundenname, Rufnummer, verknüpftes Angebot) – gilt nur für genau diesen Dateinamen
+const psIdxCtxSet = ctx => {
+  try {
+    window.__psIdxCtx = Object.assign({ ts: Date.now() }, ctx || {});
+  } catch (e) {}
+};
+// Aufruf NACH erfolgreicher Übergabe an den Archiv-Flow. Blockiert nie, wirft nie.
+const psIdxRecordArchive = async (dateiname, betreff) => {
+  try {
+    const shopIds = typeof SHOPS !== 'undefined' && SHOPS ? Object.keys(SHOPS) : [];
+    const p = psArchParseFile(dateiname, shopIds);
+    const f = String(betreff || '').split('|');
+    const typ = f[1] === 'abschluss' ? 'abschluss' : f[1] === 'angebot' ? 'angebot' : p.typ || 'angebot';
+    let ctx = null;
+    try {
+      const c = window.__psIdxCtx;
+      if (c && c.dateiname === dateiname && Date.now() - (c.ts || 0) < 10 * 60 * 1000) ctx = c;
+      window.__psIdxCtx = null;
+    } catch (e) {}
+    const leer = v => /^(keinName|keineNr)$/i.test(String(v || '').trim()) ? '' : v;
+    let shop = '';
+    try {
+      shop = String(window.__PS_SHOP_ORT || window.__PS_SHOP || '').toLowerCase();
+    } catch (e) {}
+    const entry = psIdxBuild({
+      fileName: dateiname,
+      typ,
+      shopId: shop || p.shopId,
+      kunde: ctx && ctx.kunde || (typ === 'angebot' ? leer(p.kunde) : ''),
+      ruf: ctx && ctx.ruf || p.phone,
+      datum: p.datum,
+      agent: f[3] || '',
+      ts: Date.now(),
+      offerId: ctx && ctx.offerId || '',
+      src: 'app',
+      uid: window.__PS_USER_UID || ''
+    });
+    if (!entry.fileName) return false;
+    const q = psIdxQueueGet().filter(x => psIdxId(x.fileName) !== psIdxId(entry.fileName));
+    q.push(entry);
+    psIdxQueueSet(q); // erst sichern, dann schreiben: übersteht auch ein sofortiges Neuladen der Seite
+    const n = await psIdxFlush(2500);
+    return n > 0;
+  } catch (e) {
+    return false;
+  }
+};
+
+const psIdxErr = e => {
+  const c = e && e.code || '';
+  if (c === 'permission-denied') return psArchErr('forbidden', c);
+  if (c === 'unavailable' || c === 'deadline-exceeded' || c === 'timeout') return psArchErr('network', c);
+  return psArchErr('server', c);
+};
+
+// Passt der Eintrag zur Suche?
+const psIdxMatch = (pq, e) => {
+  if (!e) return false;
+  if (pq.mode === 'phone') return !!e.nsn && String(e.nsn).indexOf(pq.nsn) === 0;
+  if (pq.mode === 'name') {
+    const toks = psArchNorm(e.kunde).split(' ').filter(Boolean);
+    return pq.tokens.every(t => toks.some(x => x.indexOf(t) === 0));
+  }
+  return false;
+};
+
+// cfg = { url, allowedIds:[…], isAdmin:bool, allShopIds:[…] }   opts = { typ:'', shop:'' }
+const psIdxSearch = async (cfg, rawQuery, opts) => {
+  opts = opts || {};
+  const pq = psArchParseQuery(rawQuery);
+  if (pq.mode !== 'name' && pq.mode !== 'phone') return { items: [], pq, limited: false };
+  if (psArchOffline()) throw psArchErr('network');
+  const db = psIdxDb();
+  if (!db) throw psArchErr('server');
+  const allowed = cfg.allowedIds || [];
+  const allAccess = !!cfg.isAdmin || !!(cfg.allShopIds && cfg.allShopIds.length && allowed.length >= cfg.allShopIds.length);
+  let shops; // null = ohne Standort-Einschränkung (Admin / alle Standorte)
+  if (opts.shop) {
+    if (!cfg.isAdmin && allowed.indexOf(opts.shop) === -1) return { items: [], pq, limited: false };
+    shops = [opts.shop];
+  } else {
+    shops = allAccess ? null : allowed.slice();
+  }
+  const LIM = 150;
+  const run = shop => {
+    let q = db.collection(PS_IDX_COLL);
+    if (shop) q = q.where('shopId', '==', shop);
+    return q.where('keys', 'array-contains', pq.key).limit(LIM).get();
+  };
+  const snaps = [];
+  let denied = 0, failed = 0;
+  if (shops === null) {
+    try {
+      snaps.push(await run(''));
+    } catch (e) {
+      // Mitarbeiter mit "alle Standorte", die der Server nicht so einstuft: je Standort einzeln abfragen
+      if (e && e.code === 'permission-denied' && !cfg.isAdmin) shops = allowed.slice();
+      else throw psIdxErr(e);
+    }
+  }
+  if (shops !== null) {
+    const rs = await Promise.allSettled(shops.map(run));
+    rs.forEach(r => {
+      if (r.status === 'fulfilled') snaps.push(r.value);
+      else if (r.reason && r.reason.code === 'permission-denied') denied++;
+      else failed++;
+    });
+    if (!snaps.length && shops.length) throw psIdxErr({ code: denied ? 'permission-denied' : 'unavailable' });
+  }
+  const byId = new Map();
+  let limited = false;
+  snaps.forEach(s => {
+    if (s.size >= LIM) limited = true;
+    s.forEach(d => {
+      const x = d.data();
+      if (x && x.fileName) byId.set(d.id, { ...x, docId: d.id });
+    });
+  });
+  const items = Array.from(byId.values()).filter(e => psIdxMatch(pq, e)).filter(e => !opts.typ || e.typ === opts.typ).filter(e => opts.shop ? e.shopId === opts.shop : cfg.isAdmin || !!e.shopId && allowed.indexOf(e.shopId) !== -1).sort((a, b) => {
+    if (pq.mode === 'phone') {
+      const ea = a.nsn === pq.nsn ? 1 : 0, eb = b.nsn === pq.nsn ? 1 : 0;
+      if (ea !== eb) return eb - ea; // exakte Nummer zuerst
+    }
+    return (b.ts || 0) - (a.ts || 0);
+  });
+  return { items, pq, limited };
+};
+
+// Angebote (Cloud) + PDFs zu Karten zusammenführen. Zuordnung NUR über die gespeicherte Angebots-ID.
+const psArchGroup = (cloud, pdfs) => {
+  const cards = [];
+  const byOffer = new Map();
+  (cloud || []).forEach(o => {
+    const c = { key: 'o' + o.id, offer: o, pdfs: [], ts: o.ts || 0 };
+    cards.push(c);
+    byOffer.set(o.id, c);
+  });
+  (pdfs || []).forEach(e => {
+    const c = e.offerId ? byOffer.get(e.offerId) : null;
+    if (c) {
+      c.pdfs.push(e);
+      c.ts = Math.max(c.ts, e.ts || 0);
+    } else {
+      cards.push({ key: 'p' + e.docId, offer: null, pdfs: [e], ts: e.ts || 0 });
+    }
+  });
+  cards.forEach(c => c.pdfs.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
+  return cards.sort((a, b) => b.ts - a.ts);
+};
+
+// ── Flow "Pencil Selling PDF Archiv API V3": PDF holen, Verbindung prüfen, Import ───────────
+// v55.11: Das Login-Token (idToken) geht NUR an Power-Automate-Adressen (https, *.api.powerplatform.com
+// bzw. *.logic.azure.com). Schutz gegen Tippfehler/Austausch der Flow-Adresse in der Datei.
+const psArchUrlOk = url => {
+  try {
+    const u = new URL(String(url || ''));
+    const host = u.hostname.toLowerCase();
+    return u.protocol === 'https:' && (/\.api\.powerplatform\.com$/.test(host) || /\.logic\.azure\.com$/.test(host));
+  } catch (e) {
+    return false;
+  }
+};
+// Ein Aufruf an den Flow. Fehler werden zu Codes (kein Klartext aus dem Netz).
+// App-Antwort = JSON mit Feld "ok" (true/false). 401/403/404 OHNE App-Antwort kommen vom Dienst davor
+// (z. B. abgelaufene Signatur der Flow-Adresse, Flow ausgeschaltet) → Code "gateway".
+const psArchCall = async (url, payload, timeoutMs) => {
+  if (!psArchUrlOk(url)) throw psArchErr('noflow', 'badurl');
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+  try {
+    let r;
+    try {
+      r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
+        signal: ctl ? ctl.signal : undefined
+      });
+    } catch (e) {
+      // Der Dienst vor dem Flow antwortet bei ungültiger Signatur ohne CORS-Kopfzeilen: der Browser meldet dann
+      // nur "Netzwerkfehler". Ist der Browser online, hängt der Code "fetch" daran (andere Fehlermeldung).
+      throw psArchErr(e && e.name === 'AbortError' ? 'timeout' : 'network', psArchOffline() ? '' : 'fetch');
+    }
+    let j = null;
+    try {
+      j = await r.json();
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw psArchErr('timeout');
+    }
+    const app = !!j && typeof j === 'object' && typeof j.ok === 'boolean';
+    if (!app && (r.status === 401 || r.status === 403 || r.status === 404)) throw psArchErr('gateway', String(r.status));
+    if (r.status === 401) throw psArchErr('auth');
+    if (r.status === 403) throw psArchErr('forbidden');
+    if (r.status === 404) throw psArchErr('notfound');
+    if (!r.ok) throw psArchErr('server');
+    if (!j || j.ok !== true) {
+      const c = j && j.error;
+      throw psArchErr(c === 'auth' || c === 'forbidden' || c === 'notfound' ? c : 'server');
+    }
+    return j;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+const psArchUid = () => {
+  try {
+    return window.__betaAuth && window.__betaAuth.currentUser && window.__betaAuth.currentUser.uid || '';
+  } catch (e) {
+    return '';
+  }
+};
+// force = true erzwingt ein neues Login-Token vom Server (nach abgelehntem/abgelaufenem Token).
+const psArchToken = async force => {
+  try {
+    const u = window.__betaAuth && window.__betaAuth.currentUser;
+    if (!u) throw 0;
+    return await u.getIdToken(!!force);
+  } catch (e) {
+    if (e && e.code === 'auth/network-request-failed') throw psArchErr('network');
+    throw psArchErr('auth');
+  }
+};
+// Anfrage mit Login-Token. Lehnt der Flow das Token ab ("auth"), wird EINMAL mit frisch erneuertem Token wiederholt.
+const psArchRequest = async (cfg, payload, timeoutMs) => {
+  if (!cfg.url) throw psArchErr('noflow');
+  if (psArchOffline()) throw psArchErr('network');
+  let force = false;
+  for (let attempt = 0; ; attempt++) {
+    const idToken = await psArchToken(force);
+    try {
+      return await psArchCall(cfg.url, { ...payload, idToken }, timeoutMs);
+    } catch (e) {
+      if (e && e.code === 'auth' && attempt === 0) {
+        force = true;
+        continue;
+      }
+      throw e;
+    }
+  }
+};
+
+const psArchB64ToBuf = b64 => {
+  const bin = atob(String(b64 || '').replace(/\s+/g, ''));
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u.buffer;
+};
+const psArchPdfOk = buf => {
+  try {
+    if (!buf || buf.byteLength < 300) return false;
+    if (new TextDecoder('latin1').decode(new Uint8Array(buf, 0, 5)).indexOf('%PDF') !== 0) return false;
+    const n = Math.min(2048, buf.byteLength);
+    return new TextDecoder('latin1').decode(new Uint8Array(buf, buf.byteLength - n, n)).indexOf('%%EOF') !== -1;
+  } catch (e) {
+    return false;
+  }
+};
+const __psArchFiles = new Map();
+const __psArchInflight = new Map();
+let __psArchFilesUid = null;
+// PDF-Bytes holen (max. 3 zuletzt geöffnete Dateien bleiben im Arbeitsspeicher, bei anderem Benutzer wird geleert).
+// Der Flow prüft Login + Standort. Gleichzeitige Anfragen für dieselbe Datei teilen sich EINEN Flow-Aufruf.
+const psArchGet = async (cfg, fileName) => {
+  if (!cfg.url) throw psArchErr('noflow');
+  const uid = psArchUid();
+  if (__psArchFilesUid !== uid) {
+    __psArchFiles.clear();
+    __psArchInflight.clear();
+    __psArchFilesUid = uid;
+  }
+  if (__psArchFiles.has(fileName)) return __psArchFiles.get(fileName);
+  if (__psArchInflight.has(fileName)) return __psArchInflight.get(fileName);
+  if (psArchOffline()) throw psArchErr('network');
+  const job = (async () => {
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await psArchRequest(cfg, { action: 'get', name: fileName }, 60000);
+        break;
+      } catch (e) {
+        // Einmal wiederholen bei kurzem Netz-/Serverfehler (Zeitüberschreitung bewusst nicht: wartet schon 60 s)
+        if (attempt === 0 && e && (e.code === 'server' || e.code === 'network') && !psArchOffline()) {
+          const ms = Number(window.__psArchRetryMs);
+          await new Promise(r => setTimeout(r, isFinite(ms) && ms >= 0 ? ms : 1200));
+          continue;
+        }
+        throw e;
+      }
+    }
+    if (!res.b64) throw psArchErr('badfile');
+    // Der Flow muss genau die angefragte Datei liefern (Schutz gegen falsche Zuordnung Index ↔ SharePoint)
+    if (typeof res.name === 'string' && res.name.trim().toLowerCase() !== String(fileName).trim().toLowerCase()) throw psArchErr('badfile', 'name');
+    let buf;
+    try {
+      buf = psArchB64ToBuf(res.b64);
+    } catch (e) {
+      throw psArchErr('badfile');
+    }
+    if (!psArchPdfOk(buf)) throw psArchErr('badfile');
+    if (__psArchFilesUid === uid) {
+      __psArchFiles.set(fileName, buf);
+      if (__psArchFiles.size > 3) __psArchFiles.delete(__psArchFiles.keys().next().value);
+    }
+    return buf;
+  })();
+  __psArchInflight.set(fileName, job);
+  try {
+    return await job;
+  } finally {
+    if (__psArchInflight.get(fileName) === job) __psArchInflight.delete(fileName);
+  }
+};
+const psArchDownload = (buf, name) => {
+  const url = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name || 'Pencil-Archiv.pdf';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    try {
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {}
+  }, 4000);
+};
+
+// Verbindungsstatus des PDF-Abrufs. "ok" NUR, wenn der Flow selbst bestätigt: Login gültig,
+// Profil gelesen und freigegeben, Bibliothek lesbar. Fehler werden nur kurz gemerkt.
+let __psArchStatus = null;
+const psArchStatus = async (cfg, force) => {
+  if (!cfg.url) return { state: 'off' };
+  const c = __psArchStatus;
+  if (c && !force && Date.now() - c.ts < (c.state === 'ok' ? 10 * 60 * 1000 : 20000)) return c;
+  let r;
+  try {
+    if (psArchOffline()) throw psArchErr('network');
+    const res = await psArchRequest(cfg, { action: 'status' }, 30000);
+    const ck = res.checks || {};
+    r = res.verified === true && ck.token === true && ck.profile === true && ck.library === true ? { ts: Date.now(), state: 'ok', admin: !!res.admin, shops: Array.isArray(res.shops) ? res.shops : [] } : { ts: Date.now(), state: 'fail', code: 'server' };
+  } catch (e) {
+    r = { ts: Date.now(), state: 'fail', code: e && e.code || 'server', fb: e && e.fb || '' };
+  }
+  __psArchStatus = r;
+  return r;
+};
+
+// v55.11: Sicherheitsproben gegen den ECHTEN Flow. "Läuft" reicht nicht: der Flow muss Anfragen ohne/mit falschem Login
+// ablehnen, Fremd-Standorte sperren (und zwar BEVOR er prüft, ob die Datei existiert, sonst verrät 404 vs. 403 fremde
+// Dateien) und Admin-Funktionen sperren. Die Proben nutzen erfundene Dateinamen "PENCIL_Systemtest_…" – es wird nie ein
+// echtes PDF abgerufen.
+const psArchRaw = async (url, payload, timeoutMs) => {
+  if (!psArchUrlOk(url)) return { err: 'badurl' };
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload),
+      signal: ctl ? ctl.signal : undefined
+    });
+    let j = null;
+    try {
+      j = await r.json();
+    } catch (e) {}
+    return { status: r.status, j };
+  } catch (e) {
+    return { err: e && e.name === 'AbortError' ? 'timeout' : 'network' };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+// want: 'reject' = muss abgelehnt werden · 403 / 404 = genau dieser Status wird erwartet
+const psArchProbeJudge = (want, resp) => {
+  if (!resp || resp.err) return { state: 'skip', detail: 'Keine Antwort vom Flow (' + (resp && resp.err || '?') + ').' };
+  const j = resp.j, st = resp.status;
+  if (j && j.ok === true && !(j.verified === false && !j.b64 && !Array.isArray(j.items))) return { state: 'fail', detail: 'Der Flow hat die Anfrage ANGENOMMEN – die Berechtigungsprüfung fehlt oder ist zu locker!' };
+  if (want === 'reject') {
+    if (st >= 400 && st < 500 || st < 300 && j && j.ok === false || j && j.ok === true && j.verified === false) return { state: 'ok', detail: 'Abgelehnt (HTTP ' + st + ').' };
+    return { state: 'fail', detail: 'Unerwartete Antwort (HTTP ' + st + ') statt sauberer Ablehnung – Flow prüfen.' };
+  }
+  if (st === want) return { state: 'ok', detail: 'HTTP ' + st + ' wie erwartet.' };
+  return { state: 'fail', detail: 'Erwartet HTTP ' + want + ', erhalten HTTP ' + st + (want === 403 && st === 404 ? ' – der Flow prüft die Datei vor der Berechtigung (verrät, ob fremde Dateien existieren).' : '.') };
+};
+const psArchProbes = async (cfg, push) => {
+  const allowed = cfg.allowedIds || [];
+  const allShopIds = cfg.allShopIds || [];
+  const own = allowed[0] || '';
+  const cap = s => String(s).split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('-');
+  const nm = shop => 'PENCIL_Systemtest_' + cap(shop) + '_Angebot_2000-01-01.pdf';
+  const call = p => psArchRaw(cfg.url, p, 30000);
+  const judge = (id, label, want, resp) => {
+    const v = psArchProbeJudge(want, resp);
+    push(id, label, v.state, v.detail);
+  };
+  let idToken = '';
+  try {
+    idToken = await psArchToken();
+  } catch (e) {}
+  judge('sec-status0', 'Flow: Status ohne Login abgelehnt', 'reject', await call({ action: 'status' }));
+  judge('sec-get0', 'Flow: PDF-Abruf ohne Login abgelehnt', 'reject', await call({ action: 'get', name: nm(own || 'aalen') }));
+  judge('sec-badtoken', 'Flow: PDF-Abruf mit ungültigem Login abgelehnt', 'reject', await call({ action: 'get', idToken: 'x.y.z', name: nm(own || 'aalen') }));
+  if (!idToken) {
+    push('sec-name', 'Flow: ungültiger Dateiname abgelehnt', 'skip', 'Kein Login-Token.');
+    return;
+  }
+  judge('sec-name', 'Flow: ungültiger Dateiname abgelehnt', 'reject', await call({ action: 'get', idToken, name: "PENCIL_a'b/..\\c.pdf" }));
+  if (own) judge('sec-notfound', 'Flow: nicht vorhandene PDF → 404', 404, await call({ action: 'get', idToken, name: nm(own) }));
+  else push('sec-notfound', 'Flow: nicht vorhandene PDF → 404', 'skip', 'Kein eigener Standort.');
+  const foreign = allShopIds.find(id => allowed.indexOf(id) === -1);
+  if (cfg.isAdmin || !foreign) {
+    push('sec-foreign', 'Flow: fremder Standort → 403', 'skip', 'Nur mit einem Mitarbeiter-Login prüfbar (Admin darf alle Standorte).');
+    push('sec-list', 'Flow: Dateiliste nur für Admin', 'skip', 'Nur mit einem Mitarbeiter-Login prüfbar.');
+  } else {
+    judge('sec-foreign', 'Flow: fremder Standort → 403', 403, await call({ action: 'get', idToken, name: nm(foreign) }));
+    judge('sec-list', 'Flow: Dateiliste nur für Admin', 403, await call({ action: 'list', idToken, afterId: 0, limit: 1 }));
+  }
+};
+
+// Systemprüfung: prüft mit dem echten Login des Benutzers, ob alles wirklich funktioniert.
+// Ergebnis: Liste { id, label, state:'ok'|'fail'|'skip', detail }
+const psArchSelfTest = async (cfg, onStep) => {
+  const out = [];
+  const push = (id, label, state, detail) => {
+    out.push({ id, label, state, detail: detail || '' });
+    try {
+      onStep && onStep(out.slice());
+    } catch (e) {}
+  };
+  const allowed = cfg.allowedIds || [];
+  const allShopIds = cfg.allShopIds || [];
+  const allAccess = !!cfg.isAdmin || !!(allShopIds.length && allowed.length >= allShopIds.length);
+  let uid = '';
+  try {
+    uid = window.__betaAuth && window.__betaAuth.currentUser && window.__betaAuth.currentUser.uid || '';
+    await psArchToken();
+    push('login', 'Anmeldung', 'ok', cfg.isAdmin ? 'Rolle: Admin' : 'Rolle: Mitarbeiter · Standorte: ' + (allowed.join(', ') || '–'));
+  } catch (e) {
+    push('login', 'Anmeldung', 'fail', psArchErrText(e));
+  }
+  const db = psIdxDb();
+  // Suchindex lesbar
+  if (!db) {
+    push('idx', 'Suchindex lesbar', 'fail', 'Keine Datenbankverbindung.');
+  } else {
+    const probe = shop => {
+      let q = db.collection(PS_IDX_COLL);
+      if (shop) q = q.where('shopId', '==', shop);
+      return q.limit(1).get();
+    };
+    try {
+      if (allAccess) {
+        await probe('');
+        push('idx', 'Suchindex lesbar', 'ok', 'Alle Standorte');
+      } else {
+        const bad = [];
+        for (const s of allowed) {
+          try {
+            await probe(s);
+          } catch (e) {
+            bad.push(s);
+          }
+        }
+        if (bad.length) push('idx', 'Suchindex lesbar', 'fail', 'Server verweigert: ' + bad.join(', ') + ' – Firestore-Regeln für „pdf_index“ prüfen.');
+        else push('idx', 'Suchindex lesbar', 'ok', 'Eigene Standorte: ' + allowed.join(', '));
+      }
+    } catch (e) {
+      push('idx', 'Suchindex lesbar', 'fail', (e && e.code === 'permission-denied' ? 'Server verweigert den Zugriff' : 'Fehler') + ' – Firestore-Regeln für „pdf_index“ prüfen.');
+    }
+    // Fremde Standorte müssen der Server abweisen
+    const foreign = allShopIds.find(id => allowed.indexOf(id) === -1);
+    if (allAccess || !foreign) {
+      push('foreign', 'Fremde Standorte gesperrt', 'skip', 'Nur mit einem Mitarbeiter-Login prüfbar (Admin sieht alle Standorte).');
+    } else {
+      try {
+        await db.collection(PS_IDX_COLL).where('shopId', '==', foreign).limit(1).get();
+        push('foreign', 'Fremde Standorte gesperrt', 'fail', 'Der Server liefert Daten eines fremden Standorts – Regeln zu offen!');
+      } catch (e) {
+        if (e && e.code === 'permission-denied') push('foreign', 'Fremde Standorte gesperrt', 'ok', 'Server weist fremden Standort ab.');
+        else push('foreign', 'Fremde Standorte gesperrt', 'fail', 'Unklarer Fehler bei der Prüfung.');
+      }
+    }
+    // Schreibtest (nur Admin, räumt sich selbst auf)
+    if (cfg.isAdmin) {
+      const id = '_selftest_' + (uid || 'x').slice(0, 12);
+      try {
+        const ref = db.collection(PS_IDX_COLL).doc(id);
+        await ref.set(psIdxBuild({ fileName: id, typ: 'angebot', shopId: allowed[0] || '', kunde: 'Systemtest', datum: new Date().toISOString().slice(0, 10), src: 'import', uid }));
+        const back = await ref.get();
+        await ref.delete();
+        push('write', 'Index schreiben / lesen / löschen', back.exists ? 'ok' : 'fail', back.exists ? 'Testeintrag geschrieben und wieder gelöscht.' : 'Testeintrag nicht lesbar.');
+      } catch (e) {
+        push('write', 'Index schreiben / lesen / löschen', 'fail', 'Schreiben abgelehnt – Firestore-Regeln prüfen.');
+      }
+    } else {
+      push('write', 'Index schreiben', 'skip', 'Nur Admin.');
+    }
+  }
+  // Gespeicherte Angebote (30 Tage)
+  try {
+    const list = typeof cloudListOffers === 'function' ? await cloudListOffers() : null;
+    if (Array.isArray(list)) push('offers', 'Gespeicherte Angebote (30 Tage)', 'ok', list.length + ' Angebot(e) für diesen Standort');
+    else push('offers', 'Gespeicherte Angebote (30 Tage)', 'fail', 'Liste konnte nicht geladen werden.');
+  } catch (e) {
+    push('offers', 'Gespeicherte Angebote (30 Tage)', 'fail', 'Liste konnte nicht geladen werden.');
+  }
+  // PDF-Abruf über den Flow
+  if (!cfg.url) {
+    push('flow', 'PDF-Abruf (SharePoint-Flow)', 'skip', 'Noch nicht verbunden – Flow-URL fehlt.');
+  } else {
+    const st = await psArchStatus(cfg, true);
+    if (st.state === 'ok') {
+      push('flow', 'PDF-Abruf (SharePoint-Flow)', 'ok', 'Flow bestätigt Login, Berechtigung und Zugriff auf die Bibliothek.' + (st.shops && st.shops.length ? ' Standorte: ' + st.shops.join(', ') : ''));
+      try {
+        await psArchProbes(cfg, push);
+      } catch (e) {
+        push('sec', 'Flow: Sicherheitsproben', 'fail', 'Proben konnten nicht ausgeführt werden.');
+      }
+    } else push('flow', 'PDF-Abruf (SharePoint-Flow)', 'fail', psArchErrText({ code: st.code, fb: st.fb }));
+  }
+  return out;
+};
+
+// Einmaliger Import: alle vorhandenen PENCIL-PDFs aus dem Archiv in den Suchindex aufnehmen (nur Admin).
+// Schon vorhandene Einträge werden NICHT überschrieben; mehrfaches Ausführen ist harmlos.
+const psArchImport = async (cfg, onProgress, opts) => {
+  if (!cfg.url) throw psArchErr('noflow');
+  if (!cfg.isAdmin) throw psArchErr('forbidden'); // nur Komfort: den Admin-Zugriff entscheidet der Flow
+  const db = psIdxDb();
+  if (!db) throw psArchErr('server');
+  let after = Math.max(0, Number(opts && opts.afterId) || 0), seen = 0, neu = 0, uebersprungen = 0, pages = 0;
+  let cursor = after, done = false;
+  for (;;) {
+    if (psArchOffline()) throw psArchErr('network');
+    const res = await psArchRequest(cfg, { action: 'list', afterId: after, limit: 500 }, 90000);
+    const items = Array.isArray(res.items) ? res.items : [];
+    const entries = [];
+    items.forEach(it => {
+      const e = it && it.name ? psIdxFromFile(it.name, it.modified, cfg.allShopIds) : null;
+      if (e) entries.push({ ...e, uid: window.__PS_USER_UID || '' });
+      else uebersprungen++;
+    });
+    for (let i = 0; i < entries.length; i += 100) {
+      const chunk = entries.slice(i, i + 100);
+      const refs = chunk.map(e => db.collection(PS_IDX_COLL).doc(psIdxId(e.fileName)));
+      const docs = await Promise.all(refs.map(r => r.get()));
+      const batch = db.batch();
+      let n = 0;
+      chunk.forEach((e, j) => {
+        if (!docs[j].exists) {
+          batch.set(refs[j], e);
+          n++;
+        }
+      });
+      if (n) await batch.commit();
+      neu += n;
+    }
+    seen += items.length;
+    pages++;
+    try {
+      onProgress && onProgress({ seen, neu, uebersprungen, pages });
+    } catch (e) {}
+    const last = Number(res.lastId) || 0;
+    if (last > cursor) cursor = last;
+    if (res.done === true || !last || last <= after || pages >= 400) {
+      done = res.done === true || !last || last <= after; // false = bei 400 Seiten abgebrochen (nicht vollständig)
+      break;
+    }
+    after = last;
+  }
+  return { seen, neu, uebersprungen, pages, lastId: cursor, done };
+};
+
+// v55.12: Automatischer Index-Abgleich im Hintergrund (nur Admin-Geräte) – kein Knopfdruck mehr nötig.
+// Beim Start und beim Öffnen der Kundensuche, höchstens alle 20 Std. (ca. 1x am Tag): nur NEU hinzugekommene Dateien (ab gemerkter Seitenmarke),
+// einmal pro Woche ein vollständiger Durchlauf. Harmlos wiederholbar (vorhandene Einträge bleiben). Läuft unsichtbar; nur bei Fehlern
+// erscheint in der Systemprüfung des Admins ein Hinweis mit Knopf.
+const PS_AUTOSYNC_KEY = 'ps_arch_autosync_v1';
+const PS_AUTOSYNC_EVERY_MS = 20 * 3600 * 1000; // ca. 1x am Tag
+const PS_AUTOSYNC_FULL_MS = 7 * 86400000;
+const PS_AUTOSYNC_RETRY_MS = 30 * 60 * 1000;
+let __psArchAutoSyncing = null;
+const psArchAutoSyncRead = () => {
+  try {
+    const o = JSON.parse(localStorage.getItem(PS_AUTOSYNC_KEY) || '{}');
+    return o && typeof o === 'object' && o.uid === (window.__PS_USER_UID || '') ? o : {};
+  } catch (e) {
+    return {};
+  }
+};
+const psArchAutoSyncWrite = o => {
+  try {
+    localStorage.setItem(PS_AUTOSYNC_KEY, JSON.stringify({ ...o, uid: window.__PS_USER_UID || '' }));
+  } catch (e) {}
+};
+// Nach einem vollständigen Durchlauf (auch dem manuellen Knopf) die Seitenmarke merken
+const psArchAutoSyncMark = (r, full) => {
+  if (!r || r.done !== true) return;
+  const st = psArchAutoSyncRead(), now = Date.now();
+  psArchAutoSyncWrite({ cursor: r.lastId || st.cursor || 0, fullTs: full ? now : st.fullTs || 0, ts: now, next: now + PS_AUTOSYNC_EVERY_MS, neu: r.neu || 0, seen: r.seen || 0 });
+};
+const psArchAutoSyncFailed = () => !!psArchAutoSyncRead().err; // letzter Versuch fehlgeschlagen und seither nicht erfolgreich
+const psArchAutoSync = (cfg, force) => {
+  if (__psArchAutoSyncing) return __psArchAutoSyncing;
+  try {
+    if (!cfg || !cfg.url || !cfg.isAdmin || !window.__PS_USER_UID || psArchOffline()) return Promise.resolve(null);
+    const st = psArchAutoSyncRead(), now = Date.now();
+    if (st.next && now < st.next && !force) return Promise.resolve(null);
+    const full = !!force || !st.cursor || !st.fullTs || now - st.fullTs > PS_AUTOSYNC_FULL_MS;
+    __psArchAutoSyncing = (async () => {
+      try {
+        const r = await psArchImport(cfg, null, { afterId: full ? 0 : st.cursor });
+        if (r.done === true) psArchAutoSyncMark(r, full);
+        else psArchAutoSyncWrite({ ...st, next: now + PS_AUTOSYNC_RETRY_MS });
+        return r;
+      } catch (e) {
+        psArchAutoSyncWrite({ ...st, next: now + PS_AUTOSYNC_RETRY_MS, err: e && e.code || 'server' });
+        return null;
+      } finally {
+        __psArchAutoSyncing = null;
+      }
+    })();
+    return __psArchAutoSyncing;
+  } catch (e) {
+    return Promise.resolve(null);
+  }
+};
+
+// v55.13: Eingebettete Arbeitskopie (pencil-selling.json) aus einem Archiv-PDF lesen – derselbe Weg wie beim PDF-Upload
+// "Angebot finalisieren" (v52). null = keine (brauchbare) Arbeitskopie im PDF. Wirft nur, wenn pdf.js nicht geladen werden kann.
+const psArchWorkCopy = async buf => {
+  for (let i = 0; i < 60 && !window.pdfjsLib; i++) await new Promise(r => setTimeout(r, 100));
+  if (!window.pdfjsLib) throw new Error('pdf.js nicht geladen');
+  if (!window.__pdfjsWorkerSet) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    window.__pdfjsWorkerSet = true;
+  }
+  const doc = await window.pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+  try {
+    const atts = await doc.getAttachments();
+    const entry = atts && Object.values(atts).find(a => a && /pencil-selling\.json$/i.test(a.filename || ''));
+    if (!entry || !entry.content) return null;
+    let obj = null;
+    try {
+      obj = JSON.parse(new TextDecoder('utf-8').decode(entry.content));
+    } catch (e) {
+      return null;
+    }
+    return obj && typeof obj === 'object' && obj.textData && typeof obj.textData === 'object' ? obj : null;
+  } finally {
+    try {
+      doc.destroy();
+    } catch (e) {}
+  }
+};
+
+// In der App gespeicherte Angebote (Firebase "saved_offers", 30 Tage) – unverändert über cloudListOffers().
+let __psArchCloudCache = null;
+const psArchCloudSearch = async (rawQuery, force) => {
+  const pq = psArchParseQuery(rawQuery);
+  if (pq.mode !== 'name' || typeof cloudListOffers !== 'function') return [];
+  let list;
+  const c = __psArchCloudCache;
+  if (c && !force && Date.now() - c.ts < 60000) {
+    list = c.list;
+  } else {
+    list = await cloudListOffers();
+    if (!Array.isArray(list)) throw psArchErr('server');
+    __psArchCloudCache = { ts: Date.now(), list };
+  }
+  const maxAge = typeof CLOUD_OFFER_MAX_AGE_MS === 'number' ? CLOUD_OFFER_MAX_AGE_MS : 30 * 86400000;
+  return list.filter(o => {
+    const hay = ' ' + psArchNorm((o.kunde || '') + ' ' + (o.label || '')) + ' ';
+    return pq.tokens.every(t => hay.indexOf(t) !== -1);
+  }).map(o => ({ ...o, restTage: Math.max(0, Math.ceil((maxAge - (Date.now() - (o.ts || 0))) / 86400000)) })).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+};
+// Wartende Index-Einträge nachtragen, sobald das Netz zurück ist (einmal registrieren)
+try {
+  if (typeof window !== 'undefined' && !window.__psIdxOnlineHook) {
+    window.__psIdxOnlineHook = true;
+    window.addEventListener('online', () => {
+      setTimeout(() => {
+        psIdxFlush(6000);
+      }, 1500);
+    });
+  }
+} catch (e) {}
+// Beim Start (nach dem Login) wartende Index-Einträge nachtragen
+try {
+  if (typeof window !== 'undefined' && !window.__psIdxStartHook) {
+    window.__psIdxStartHook = true;
+    setTimeout(() => {
+      psIdxFlush(6000);
+    }, 15000);
+  }
+} catch (e) {}
+// v55.12: Automatischer Index-Abgleich beim Start (greift nur auf Admin-Geräten; die Konfiguration kommt von archivCfg)
+try {
+  if (typeof window !== 'undefined' && !window.__psArchAutoStartHook) {
+    window.__psArchAutoStartHook = true;
+    setTimeout(() => {
+      try {
+        if (typeof window.__psArchCfgGetter === 'function') psArchAutoSync(window.__psArchCfgGetter());
+      } catch (e) {}
+    }, 25000);
+  }
+} catch (e) {}
+
+// ── v55.9: PDF-Ansicht für Archiv-Treffer (pdf.js, wie die Vorschau beim Finalisieren) ──
+const PsArchivPdfViewer = ({ buf, name, onClose }) => {
+  const h = React.createElement;
+  const boxRef = React.useRef(null);
+  const [state, setState] = React.useState('loading'); // loading|ok|error
+  const [info, setInfo] = React.useState('');
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        for (let i = 0; i < 60 && !window.pdfjsLib; i++) await new Promise(r => setTimeout(r, 100));
+        if (!window.pdfjsLib) throw new Error('pdf.js nicht geladen');
+        if (!window.__pdfjsWorkerSet) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+          window.__pdfjsWorkerSet = true;
+        }
+        const doc = await window.pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+        const cont = boxRef.current;
+        if (!cont || cancelled) return;
+        cont.innerHTML = '';
+        const maxPages = Math.min(doc.numPages, 40);
+        const cw = Math.max(200, (cont.clientWidth || 600) - 16);
+        for (let i = 1; i <= maxPages; i++) {
+          if (cancelled) return;
+          const page = await doc.getPage(i);
+          const vp0 = page.getViewport({ scale: 1 });
+          const dpr = Math.min(2, window.devicePixelRatio || 1);
+          const vp = page.getViewport({ scale: cw / vp0.width * dpr });
+          const c = document.createElement('canvas');
+          c.width = vp.width;
+          c.height = vp.height;
+          c.style.cssText = 'width:100%;display:block;margin-bottom:10px;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,0.25);background:#fff;';
+          await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+          if (cancelled) return;
+          cont.appendChild(c);
+          if (i === 1) setState('ok');
+        }
+        if (doc.numPages > maxPages) setInfo('Es werden die ersten ' + maxPages + ' von ' + doc.numPages + ' Seiten angezeigt – vollständig über „Herunterladen“.');
+        setState('ok');
+      } catch (e) {
+        if (!cancelled) {
+          try {
+            console.warn('[ARCHIVSUCHE] Vorschau-Fehler');
+          } catch (_) {}
+          setState('error');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [buf]);
+  return h('div', {
+    style: { position: 'fixed', inset: 0, zIndex: 10800, background: 'rgba(15,23,42,0.92)', display: 'flex', flexDirection: 'column' }
+  }, h('div', {
+    style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', background: '#0f172a', flexShrink: 0 }
+  }, h('div', {
+    style: { flex: 1, minWidth: 0, color: '#fff', fontWeight: 800, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+  }, name), h('button', {
+    onClick: () => psArchDownload(buf, name),
+    style: { padding: '10px 14px', borderRadius: '10px', border: 'none', background: '#2563eb', color: '#fff', fontWeight: 900, fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }
+  }, '⬇ Herunterladen'), h('button', {
+    onClick: onClose,
+    style: { padding: '10px 14px', borderRadius: '10px', border: 'none', background: 'rgba(255,255,255,0.15)', color: '#fff', fontWeight: 900, fontSize: '13px', cursor: 'pointer' }
+  }, '✕ Schließen')), h('div', {
+    style: { flex: 1, overflowY: 'auto', padding: '12px', WebkitOverflowScrolling: 'touch' }
+  }, state === 'loading' && h('div', { style: { color: '#cbd5e1', textAlign: 'center', padding: '30px', fontWeight: 700 } }, '⏳ PDF wird geladen …'), state === 'error' && h('div', {
+    style: { color: '#fecaca', textAlign: 'center', padding: '30px', fontWeight: 700 }
+  }, 'Vorschau nicht möglich – bitte „Herunterladen“ verwenden.'), h('div', { ref: boxRef, style: { maxWidth: '900px', margin: '0 auto' } }), info && h('div', { style: { color: '#94a3b8', fontSize: '12px', textAlign: 'center', padding: '8px' } }, info)));
+};
+
+
+// ── v55.10: Fenster "Pencil Selling – Kundensuche" ──
+// Eine Suche für gespeicherte Angebote (30 Tage) und archivierte PDFs.
+// cfg = { url, allowedIds, isAdmin, allShopIds }   shops = [{id,name}]
+const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onClose }) => {
+  const h = React.createElement;
+  const verbunden = !!cfg.url;
+  const [q, setQ] = React.useState('');
+  const [sq, setSq] = React.useState(''); // abgeschickter Suchbegriff (Suche läuft nur auf Knopfdruck)
+  const [errCode, setErrCode] = React.useState('');
+  const [typ, setTyp] = React.useState('');
+  const [shop, setShop] = React.useState('');
+  const [tick, setTick] = React.useState(0);
+  const [status, setStatus] = React.useState('idle'); // idle|hint|busy|ok|leer|fehler
+  const [hint, setHint] = React.useState('');
+  const [cards, setCards] = React.useState([]);
+  const [archErr, setArchErr] = React.useState('');
+  const [offErr, setOffErr] = React.useState('');
+  const [limited, setLimited] = React.useState(false);
+  const [shown, setShown] = React.useState(10);
+  const [err, setErr] = React.useState('');
+  const [busyId, setBusyId] = React.useState('');
+  const [fileErr, setFileErr] = React.useState('');
+  const [viewer, setViewer] = React.useState(null);
+  const [ab, setAb] = React.useState(verbunden ? { state: 'pending' } : { state: 'off' });
+  const [diagOpen, setDiagOpen] = React.useState(false);
+  const [diag, setDiag] = React.useState(null);
+  const [diagBusy, setDiagBusy] = React.useState(false);
+  const [imp, setImp] = React.useState(null);
+  const [, setSyncRev] = React.useState(0);
+  const seq = React.useRef(0);
+  const gesucht = React.useRef(false);
+  const alive = React.useRef(true);
+  const forceRef = React.useRef(false);
+  const shopName = id => (shops.find(s => s.id === id) || {}).name || id;
+  React.useEffect(() => {
+    alive.current = true;
+    psIdxFlush(); // ggf. wartende Index-Einträge nachtragen
+    if (verbunden) psArchStatus(cfg).then(r => {
+      if (alive.current) setAb(r);
+    });
+    if (verbunden && cfg.isAdmin) psArchAutoSync(cfg).then(r => {
+      if (!alive.current) return;
+      setSyncRev(x => x + 1);
+      if (r && r.neu > 0) setTick(x => x + 1); // neue Einträge → laufende Suche aktualisieren
+    });
+    return () => {
+      alive.current = false;
+      seq.current++;
+    };
+  }, []);
+  React.useEffect(() => {
+    const pq = psArchParseQuery(sq);
+    if (pq.mode !== 'name' && pq.mode !== 'phone') {
+      seq.current++;
+      const leerGesucht = pq.mode === 'empty' && gesucht.current;
+      setStatus(pq.mode === 'short' || leerGesucht ? 'hint' : 'idle');
+      setHint(leerGesucht ? 'Bitte Namen oder Rufnummer eingeben.' : pq.hint || '');
+      setCards([]);
+      setLimited(false);
+      return;
+    }
+    const my = ++seq.current;
+    setStatus('busy');
+    setErr('');
+    const force = forceRef.current;
+    forceRef.current = false;
+    const t = setTimeout(async () => {
+      const cloudOk = !!onLoadCloud && typ !== 'abschluss' && (!shop || shop === cloudShop) && pq.mode === 'name';
+      const [a, c] = await Promise.allSettled([psIdxSearch(cfg, sq, { typ, shop }), cloudOk ? psArchCloudSearch(sq, force) : Promise.resolve([])]);
+      if (my !== seq.current) return;
+      const aRej = a.status === 'rejected', cRej = c.status === 'rejected';
+      const arch = aRej ? [] : a.value.items;
+      const cl = cRej ? [] : c.value;
+      if (aRej || cRej) {
+        try {
+          console.warn('[KUNDENSUCHE] Fehler:', (aRej ? a.reason && a.reason.code : '') || (cRej ? c.reason && c.reason.code : '') || 'unbekannt'); // bewusst ohne Suchbegriff
+        } catch (_) {}
+      }
+      if (!arch.length && !cl.length && (aRej || cRej)) {
+        setCards([]);
+        setStatus('fehler');
+        const rs = aRej ? a.reason : c.reason;
+        setErr(psArchErrText(rs));
+        setErrCode((rs && rs.code || 'unbekannt') + (rs && rs.fb ? '/' + rs.fb : ''));
+        return;
+      }
+      setCards(psArchGroup(cl, arch));
+      setLimited(!aRej && !!a.value.limited);
+      setArchErr(aRej ? 'PDF-Archiv: ' + psArchErrText(a.reason) : '');
+      setOffErr(cRej ? 'Gespeicherte Angebote: ' + psArchErrText(c.reason) : '');
+      setShown(10);
+      setStatus(arch.length || cl.length ? 'ok' : 'leer');
+    }, 0);
+    return () => clearTimeout(t);
+  }, [sq, typ, shop, tick]);
+  const neuSuchen = () => {
+    forceRef.current = true;
+    setTick(x => x + 1);
+  };
+  const jetztSuchen = () => {
+    gesucht.current = true;
+    forceRef.current = true;
+    setSq(q);
+    setTick(x => x + 1);
+  };
+  const cloudLaden = async o => {
+    if (busyId) return;
+    setBusyId('o' + o.id);
+    setFileErr('');
+    try {
+      await onLoadCloud(o.id);
+    } finally {
+      if (alive.current) setBusyId('');
+    }
+  };
+  const oeffnen = async (e, download) => {
+    if (busyId) return;
+    setBusyId('p' + e.docId + (download ? 'd' : ''));
+    setFileErr('');
+    try {
+      const buf = await psArchGet(cfg, e.fileName);
+      if (!alive.current) return;
+      if (download) psArchDownload(buf, e.fileName);else setViewer({ buf, name: e.fileName });
+    } catch (er) {
+      try {
+        console.warn('[KUNDENSUCHE] Datei-Fehler:', er && er.code || 'unbekannt');
+      } catch (_) {}
+      if (alive.current) setFileErr(psArchErrText(er));
+    } finally {
+      if (alive.current) setBusyId('');
+    }
+  };
+  const wiederherstellen = async e => {
+    if (busyId || !onRestore) return;
+    setBusyId('p' + e.docId + 'w');
+    setFileErr('');
+    try {
+      const buf = await psArchGet(cfg, e.fileName);
+      if (!alive.current) return;
+      let obj = null;
+      try {
+        obj = await psArchWorkCopy(buf);
+      } catch (er) {
+        if (alive.current) setFileErr('Das PDF konnte nicht gelesen werden (PDF-Bibliothek nicht geladen?). Bitte Internetverbindung prüfen und erneut versuchen.');
+        return;
+      }
+      if (!alive.current) return;
+      if (!obj) {
+        setFileErr('In diesem PDF steckt keine bearbeitbare Arbeitskopie (z. B. ältere PDF). Bitte das Angebot neu erstellen.');
+        return;
+      }
+      await onRestore(obj);
+    } catch (er) {
+      try {
+        console.warn('[KUNDENSUCHE] Wiederherstellen-Fehler:', er && er.code || 'unbekannt');
+      } catch (_) {}
+      if (alive.current) setFileErr(psArchErrText(er));
+    } finally {
+      if (alive.current) setBusyId('');
+    }
+  };
+  const pruefen = async () => {
+    if (diagBusy) return;
+    setDiagBusy(true);
+    setDiag([]);
+    if (verbunden && cfg.isAdmin) psArchAutoSync(cfg, true).then(() => {
+      if (alive.current) setSyncRev(x => x + 1);
+    }); // Admin: Prüfung gleicht zugleich den Index ab (unsichtbar)
+    try {
+      const r = await psArchSelfTest(cfg, steps => {
+        if (alive.current) setDiag(steps);
+      });
+      if (alive.current) {
+        setDiag(r);
+        if (verbunden) psArchStatus(cfg).then(s => {
+          if (alive.current) setAb(s);
+        });
+      }
+    } finally {
+      if (alive.current) setDiagBusy(false);
+    }
+  };
+  const importieren = async () => {
+    if (imp && imp.state === 'run') return;
+    setImp({ state: 'run', seen: 0, neu: 0 });
+    try {
+      const r = await psArchImport(cfg, p => {
+        if (alive.current) setImp({ state: 'run', seen: p.seen, neu: p.neu });
+      });
+      psArchAutoSyncMark(r, true);
+      if (alive.current) setImp({ state: 'done', seen: r.seen, neu: r.neu, uebersprungen: r.uebersprungen });
+    } catch (e) {
+      try {
+        console.warn('[KUNDENSUCHE] Import-Fehler:', e && e.code || 'unbekannt');
+      } catch (_) {}
+      if (alive.current) setImp({ state: 'err', text: psArchErrText(e) });
+    }
+  };
+  const chip = (aktiv, label, onClick) => h('button', {
+    key: label,
+    onClick,
+    style: {
+      padding: '9px 14px',
+      borderRadius: '999px',
+      border: aktiv ? '2px solid #2563eb' : '2px solid #e2e8f0',
+      background: aktiv ? '#eff6ff' : '#fff',
+      color: aktiv ? '#1d4ed8' : '#475569',
+      fontWeight: 800,
+      fontSize: '13px',
+      cursor: 'pointer'
+    }
+  }, label);
+  const box = (bg, bd, col, content) => h('div', {
+    style: { marginTop: '12px', fontSize: '13px', fontWeight: 700, color: col, background: bg, border: '1px solid ' + bd, borderRadius: '12px', padding: '12px 14px', lineHeight: 1.45 }
+  }, content);
+  const btn = (label, onClick, primary, disabled, extra, full) => h('button', {
+    onClick,
+    disabled,
+    style: {
+      flex: full ? '1 1 100%' : 1,
+      padding: '12px 10px',
+      borderRadius: '11px',
+      border: primary ? 'none' : '2px solid #cbd5e1',
+      background: primary ? extra || 'linear-gradient(135deg,#2563eb,#1d4ed8)' : '#fff',
+      color: primary ? '#fff' : '#334155',
+      fontWeight: 900,
+      fontSize: '13px',
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? 0.55 : 1
+    }
+  }, label);
+  const mehrShops = shops.length > 1;
+  // Zeile in der Karte: grün = Angebot in der App, blau = PDF im Archiv
+  const zeile = (key, bg, bd, tagCol, tag, sub, mono, actions) => h('div', {
+    key,
+    style: { background: bg, border: '1px solid ' + bd, borderRadius: '11px', padding: '10px 12px', marginTop: '8px' }
+  }, h('div', { style: { fontSize: '11px', fontWeight: 900, color: tagCol, letterSpacing: '0.2px' } }, tag), h('div', { style: { fontSize: '12.5px', color: '#334155', marginTop: '2px' } }, sub), mono ? h('div', { style: { fontSize: '10.5px', color: '#94a3b8', margin: '3px 0 0', wordBreak: 'break-all', fontFamily: 'ui-monospace,Menlo,Consolas,monospace' } }, mono) : null, h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '9px' } }, actions));
+  const kachel = c => {
+    const o = c.offer, p0 = c.pdfs[0];
+    const titel = o && (o.kunde || o.label) || p0 && (p0.kunde || p0.ruf || p0.fileName) || 'Angebot';
+    const shopId = p0 && p0.shopId || (o ? cloudShop : '');
+    const ruf = c.pdfs.map(e => e.ruf).find(Boolean) || '';
+    return h('div', {
+      key: c.key,
+      style: { border: '2px solid #e2e8f0', borderRadius: '14px', padding: '12px 14px', marginBottom: '10px', background: '#fff' }
+    }, h('div', { style: { fontSize: '17px', fontWeight: 900, color: '#0f172a' } }, titel), h('div', { style: { fontSize: '12.5px', color: '#64748b', marginTop: '2px' } }, [shopId ? '📍 ' + shopName(shopId) : '', ruf ? '📞 ' + ruf : ''].filter(Boolean).join('  ·  ') || ' '), o && zeile('o', '#f0fdf4', '#bbf7d0', '#166534', '📝 ANGEBOT · IN DER APP GESPEICHERT', (o.datum || '') + ' · ' + (o.agent || 'unbekannt') + ' · noch ' + o.restTage + ' Tage', '', [btn(busyId === 'o' + o.id ? '…' : 'Angebot laden', () => cloudLaden(o), true, !!busyId, 'linear-gradient(135deg,#16a34a,#15803d)')]), c.pdfs.map(e => zeile('p' + e.docId, '#eff6ff', '#bfdbfe', '#1d4ed8', '📄 PDF-ARCHIV · ' + (e.typ === 'abschluss' ? 'ABSCHLUSS' : 'ANGEBOT'), psArchDatum(e) + (e.agent ? ' · ' + e.agent : ''), e.fileName, [btn(busyId === 'p' + e.docId ? '…' : '📄 PDF öffnen', () => oeffnen(e, false), true, !!busyId || !verbunden), btn(busyId === 'p' + e.docId + 'd' ? '…' : '⬇ Herunterladen', () => oeffnen(e, true), false, !!busyId || !verbunden), e.typ === 'angebot' && onRestore && !c.pdfs.some(x => x.typ === 'abschluss') ? btn(busyId === 'p' + e.docId + 'w' ? '…' : '✏️ Angebot wiederherstellen & fertigstellen', () => wiederherstellen(e), true, !!busyId || !verbunden, 'linear-gradient(135deg,#16a34a,#15803d)', true) : null])));
+  };
+  const pillStil = {
+    ok: ['#f0fdf4', '#bbf7d0', '#166534', 'PDF-Abruf: verbunden ✓'],
+    pending: ['#eff6ff', '#bfdbfe', '#1d4ed8', 'PDF-Abruf: wird geprüft …'],
+    fail: ['#fef2f2', '#fecaca', '#991b1b', 'PDF-Abruf: nicht verfügbar · tippen zum Prüfen']
+  }[ab.state];
+  const schritt = s => h('div', {
+    key: s.id,
+    style: { display: 'flex', gap: '8px', padding: '7px 0', borderBottom: '1px solid #f1f5f9', fontSize: '12.5px', lineHeight: 1.4 }
+  }, h('div', { style: { width: '20px', flexShrink: 0 } }, s.state === 'ok' ? '✅' : s.state === 'fail' ? '❌' : '➖'), h('div', null, h('div', { style: { fontWeight: 800, color: '#0f172a' } }, s.label), s.detail ? h('div', { style: { color: s.state === 'fail' ? '#991b1b' : '#64748b' } }, s.detail) : null));
+  return h(React.Fragment, null, h('div', {
+    style: { position: 'fixed', inset: 0, zIndex: 10700, background: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px' }
+  }, h('div', {
+    style: { background: '#fff', width: '100%', maxWidth: '620px', maxHeight: '94vh', borderRadius: '20px', boxShadow: '0 24px 60px rgba(0,0,0,0.35)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }
+  }, h('div', {
+    style: { background: 'linear-gradient(135deg,#2563eb,#1e3a8a)', padding: '16px 18px', textAlign: 'center', position: 'relative', flexShrink: 0 }
+  }, h('button', {
+    onClick: onClose,
+    style: { position: 'absolute', top: '12px', right: '12px', width: '30px', height: '30px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '14px' }
+  }, '✕'), h('div', { style: { fontSize: '24px', marginBottom: '2px' } }, '🔎'), h('h4', { style: { fontSize: '18px', fontWeight: 900, color: '#fff', margin: 0 } }, 'Pencil Selling – Kundensuche'), h('p', { style: { fontSize: '12px', color: 'rgba(255,255,255,0.8)', margin: '3px 0 0' } }, 'Gespeicherte Angebote und archivierte PDFs')), h('div', {
+    style: { padding: '16px 18px', overflowY: 'auto', flex: 1, WebkitOverflowScrolling: 'touch' }
+  }, !verbunden && h('div', {
+    style: { marginBottom: '12px', fontSize: '12.5px', fontWeight: 700, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '12px', padding: '10px 13px', lineHeight: 1.45 }
+  }, 'Das PDF-Archiv (SharePoint) ist noch nicht verbunden: PDFs werden gefunden, lassen sich aber noch nicht öffnen. Gespeicherte Angebote funktionieren bereits.'), pillStil && h('button', {
+    onClick: () => {
+      if (ab.state === 'fail') {
+        setAb({ state: 'pending' });
+        psArchStatus(cfg, true).then(r => {
+          if (alive.current) setAb(r);
+        });
+      }
+    },
+    style: { marginBottom: '12px', fontSize: '12px', fontWeight: 800, color: pillStil[2], background: pillStil[0], border: '1px solid ' + pillStil[1], borderRadius: '999px', padding: '6px 12px', cursor: ab.state === 'fail' ? 'pointer' : 'default' }
+  }, pillStil[3]), h('div', { style: { position: 'relative' } }, h('input', {
+    type: 'search',
+    value: q,
+    autoFocus: true,
+    placeholder: 'Name oder Rufnummer eingeben',
+    autoComplete: 'off',
+    autoCorrect: 'off',
+    spellCheck: false,
+    enterKeyHint: 'search',
+    onChange: e => setQ(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') jetztSuchen();
+    },
+    style: { width: '100%', boxSizing: 'border-box', padding: '16px 16px', borderRadius: '14px', border: '2px solid #93c5fd', background: '#eff6ff', fontSize: '18px', fontWeight: 700, color: '#1e3a8a', outline: 'none' }
+  })), h('div', { style: { display: 'flex', marginTop: '10px' } }, btn('🔎 Jetzt suchen', jetztSuchen, true, status === 'busy')), h('div', { style: { fontSize: '11px', color: '#94a3b8', margin: '8px 2px 0' } }, 'z. B. Herzog · Anna · Mül · 0176 12345678 · +49 176 12345678'), h('div', { style: { fontSize: '11px', fontWeight: 900, color: '#64748b', margin: '14px 0 6px' } }, 'DOKUMENTTYP'), h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, chip(typ === '', 'Alle Dokumente', () => setTyp('')), chip(typ === 'angebot', 'Angebote', () => setTyp('angebot')), chip(typ === 'abschluss', 'Abschlüsse', () => setTyp('abschluss'))), h('div', { style: { fontSize: '11px', fontWeight: 900, color: '#64748b', margin: '14px 0 6px' } }, 'STANDORT'), mehrShops ? h('select', {
+    value: shop,
+    onChange: e => setShop(e.target.value),
+    style: { width: '100%', padding: '13px 12px', borderRadius: '12px', border: '2px solid #e2e8f0', background: '#fff', fontSize: '15px', fontWeight: 700, color: '#334155' }
+  }, h('option', { value: '' }, 'Alle berechtigten Standorte'), shops.map(s => h('option', { key: s.id, value: s.id }, s.name))) : h('div', { style: { fontSize: '14px', fontWeight: 800, color: '#334155', padding: '4px 2px' } }, shops[0] ? shops[0].name : '–'), status === 'hint' && box('#eff6ff', '#bfdbfe', '#1d4ed8', hint), status === 'busy' && box('#eff6ff', '#bfdbfe', '#1d4ed8', '⏳ Suche …'), status === 'fehler' && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, err, errCode ? h('div', { style: { fontSize: '11px', fontWeight: 600, opacity: 0.7, marginTop: '4px' } }, 'Code: ' + errCode) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), status === 'leer' && box('#fffbeb', '#fde68a', '#92400e', h('div', null, 'Kein passendes Pencil-Selling-Dokument gefunden. Bitte Suchbegriff oder Standort überprüfen.', cfg.isAdmin ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, 'Ältere PDFs erscheinen erst nach dem Index-Import (unten: Systemprüfung).') : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut suchen', neuSuchen, false, false)))), fileErr && box('#fef2f2', '#fecaca', '#991b1b', fileErr), status === 'ok' && h('div', { style: { marginTop: '14px' } }, archErr && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, archErr, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), offErr && box('#fef2f2', '#fecaca', '#991b1b', offErr), h('div', { style: { fontSize: '12px', fontWeight: 900, color: '#64748b', margin: '12px 0 8px', display: 'flex', justifyContent: 'space-between' } }, h('span', null, cards.length + ' Treffer · neueste zuerst'), h('button', {
+    onClick: neuSuchen,
+    style: { border: 'none', background: 'none', color: '#2563eb', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }
+  }, '↻ Aktualisieren')), cards.slice(0, shown).map(kachel), cards.length > shown && h('div', { style: { marginTop: '4px' } }, btn('Weitere anzeigen (' + (cards.length - shown) + ')', () => setShown(s => s + 10), false, false)), limited && h('div', { style: { fontSize: '12px', color: '#92400e', fontWeight: 700, marginTop: '6px' } }, 'Es gibt sehr viele Treffer – bitte Suchbegriff, Dokumenttyp oder Standort eingrenzen.')), h('div', { style: { marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' } }, h('button', {
+    onClick: () => setDiagOpen(o => !o),
+    style: { border: 'none', background: 'none', color: '#64748b', fontWeight: 800, fontSize: '12px', cursor: 'pointer', padding: '4px 0' }
+  }, (diagOpen ? '▾ ' : '▸ ') + 'Systemprüfung'), diagOpen && h('div', { style: { marginTop: '6px' } }, h('div', { style: { fontSize: '12px', color: '#64748b', lineHeight: 1.45 } }, 'Prüft mit deiner Anmeldung, ob Suche, Berechtigungen und PDF-Abruf wirklich funktionieren.'), h('div', { style: { display: 'flex', marginTop: '8px' } }, btn(diagBusy ? '⏳ Prüfung läuft …' : 'Prüfung starten', pruefen, false, diagBusy)), diag && h('div', { style: { marginTop: '8px' } }, diag.map(schritt)), cfg.isAdmin && (imp || psArchAutoSyncFailed()) && h('div', { style: { marginTop: '14px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '12px', background: '#f8fafc' } }, h('div', { style: { fontSize: '12.5px', fontWeight: 900, color: '#0f172a' } }, 'Archiv-Index (Admin)'), h('div', { style: { fontSize: '12px', color: '#64748b', margin: '4px 0 8px', lineHeight: 1.45 } }, 'Der automatische Abgleich des Suchindex hat zuletzt nicht geklappt. Der Knopf liest alle Dateinamen im Archiv neu ein. Vorhandene Einträge bleiben unverändert, die PDFs werden nicht angefasst.'), h('div', { style: { display: 'flex' } }, btn(imp && imp.state === 'run' ? '⏳ Import läuft …' : 'Archiv-Index aufbauen', importieren, false, !verbunden || !!imp && imp.state === 'run')), imp && imp.state === 'run' && h('div', { style: { fontSize: '12px', color: '#1d4ed8', fontWeight: 700, marginTop: '8px' } }, imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen'), imp && imp.state === 'done' && h('div', { style: { fontSize: '12px', color: '#166534', fontWeight: 700, marginTop: '8px' } }, '✅ Fertig: ' + imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen · ' + imp.uebersprungen + ' ohne Pencil-Namensschema übersprungen'), imp && imp.state === 'err' && h('div', { style: { fontSize: '12px', color: '#991b1b', fontWeight: 700, marginTop: '8px' } }, '❌ Abgebrochen: ' + imp.text + ' Bereits aufgenommene Einträge bleiben erhalten; der Import kann erneut gestartet werden.'))))))), viewer && h(PsArchivPdfViewer, { buf: viewer.buf, name: viewer.name, onClose: () => setViewer(null) }));
+};
+
 // ── v51.4: PDF finalisieren – Angebots-PDF hochladen, Kunde unterschreibt, geht als ABSCHLUSS ins Archiv ──
 const PdfFinalizeModal = ({
   onClose,
   onSend,
   onRestore,
-  angeboteUrl
+  angeboteUrl,
+  archivCfg
 }) => {
   const [fileName, setFileName] = React.useState('');
+  // v55.9: Archiv-Suche (nur Angebote) – nutzt dieselbe Suche wie das Archivsuche-Fenster
+  const sucheAktiv = !!(archivCfg && archivCfg.url);
+  const [suche, setSuche] = React.useState('');
+  const [sucheStatus, setSucheStatus] = React.useState('idle'); // idle|busy|ok|leer|fehler
+  const [sucheTreffer, setSucheTreffer] = React.useState([]);
+  const [sucheFehler, setSucheFehler] = React.useState('');
+  const [ladeId, setLadeId] = React.useState('');
+  const sucheSeq = React.useRef(0);
+  const sucheTimer = React.useRef(null);
+  React.useEffect(() => () => {
+    sucheSeq.current++;
+    clearTimeout(sucheTimer.current);
+  }, []);
   const [fileBytes, setFileBytes] = React.useState(null);
   const [ruf, setRuf] = React.useState('');
   const [hasSig, setHasSig] = React.useState(false);
@@ -22573,6 +24043,193 @@ const PdfFinalizeModal = ({
     } catch (_) {}
   };
 
+  // ══════════════════════════════════════════════════════════════════════
+  // v55.9: ARCHIV-SUCHE im Finalisieren-Fenster
+  // Suche auf Knopfdruck "Jetzt suchen" bzw. Enter (nur Angebote, nur berechtigte
+  // Standorte). Tipp auf "Laden" holt das PDF direkt in die App – ohne
+  // OneDrive-Dateifenster und ohne halb geladenen Download.
+  // ══════════════════════════════════════════════════════════════════════
+  const runSuche = async (raw, force) => {
+    const pq = psArchParseQuery(raw);
+    if (pq.mode !== 'name' && pq.mode !== 'phone') {
+      sucheSeq.current++;
+      setSucheStatus('idle');
+      setSucheTreffer([]);
+      setSucheFehler('');
+      return;
+    }
+    const my = ++sucheSeq.current;
+    setSucheStatus('busy');
+    setSucheFehler('');
+    try {
+      const res = await psIdxSearch(archivCfg, raw, {
+        typ: 'angebot',
+        shop: ''
+      });
+      if (my !== sucheSeq.current) return;
+      setSucheTreffer(res.items.slice(0, 15));
+      setSucheStatus(res.items.length ? 'ok' : 'leer');
+    } catch (e) {
+      if (my !== sucheSeq.current) return;
+      try {
+        console.warn('[ARCHIVSUCHE] Fehler:', e && e.code || 'unbekannt');
+      } catch (_) {}
+      setSucheTreffer([]);
+      setSucheStatus('fehler');
+      setSucheFehler(psArchErrText(e));
+    }
+  };
+  const onSucheInput = v => {
+    setSuche(v); // Suche startet erst auf "Jetzt suchen" bzw. Enter
+  };
+  const sucheJetzt = () => {
+    clearTimeout(sucheTimer.current);
+    runSuche(suche, true);
+  };
+  const ladeTreffer = async it => {
+    if (ladeId) return;
+    setLadeId(it.docId);
+    setFileFehler('');
+    setFileName(it.fileName);
+    setFileBytes(null);
+    setFilePruefung('pruefe');
+    try {
+      const buf = await psArchGet(archivCfg, it.fileName);
+      const pruef = pruefePdfPuffer(buf);
+      if (!pruef.ok) throw psArchErr('badfile');
+      setFileBytes(buf);
+      setFilePruefung('ok');
+    } catch (e) {
+      try {
+        console.warn('[ARCHIVSUCHE] Laden fehlgeschlagen:', e && e.code || 'unbekannt');
+      } catch (_) {}
+      setFileBytes(null);
+      setFilePruefung('fehler');
+      setFileFehler(psArchErrText(e));
+    } finally {
+      setLadeId('');
+    }
+  };
+  const sucheUI = () => {
+    const h = React.createElement;
+    const hinweis = (bg, bd, col, txt) => h('div', {
+      style: {
+        marginTop: '8px',
+        fontSize: '11.5px',
+        fontWeight: 700,
+        color: col,
+        background: bg,
+        border: '1px solid ' + bd,
+        borderRadius: '10px',
+        padding: '9px 11px'
+      }
+    }, txt);
+    return h('div', {
+      style: {
+        marginBottom: '12px'
+      }
+    }, h('div', {
+      style: {
+        display: 'flex',
+        gap: '8px'
+      }
+    }, h('input', {
+      type: 'search',
+      value: suche,
+      placeholder: '🔎 Kundenname oder Rufnummer …',
+      autoComplete: 'off',
+      autoCorrect: 'off',
+      spellCheck: false,
+      enterKeyHint: 'search',
+      onChange: e => onSucheInput(e.target.value),
+      onKeyDown: e => {
+        if (e.key === 'Enter') sucheJetzt();
+      },
+      style: {
+        flex: 1,
+        minWidth: 0,
+        padding: '12px 14px',
+        borderRadius: '12px',
+        border: '2px solid #bfdbfe',
+        background: '#eff6ff',
+        fontSize: '15px',
+        fontWeight: 700,
+        color: '#1e3a8a',
+        outline: 'none'
+      }
+    }), h('button', {
+      onClick: sucheJetzt,
+      style: {
+        flexShrink: 0,
+        padding: '12px 16px',
+        borderRadius: '12px',
+        border: 'none',
+        background: 'linear-gradient(135deg,#2563eb,#1d4ed8)',
+        color: '#fff',
+        fontWeight: 900,
+        fontSize: '13px',
+        cursor: 'pointer'
+      }
+    }, 'Jetzt suchen')), sucheStatus === 'busy' && hinweis('#eff6ff', '#bfdbfe', '#1d4ed8', '⏳ Suche im Archiv …'), sucheStatus === 'leer' && hinweis('#fffbeb', '#fde68a', '#92400e', 'Kein passendes Pencil-Selling-Dokument gefunden. Bitte Suchbegriff überprüfen oder über „Ordner“ suchen.'), sucheStatus === 'fehler' && hinweis('#fef2f2', '#fecaca', '#991b1b', sucheFehler), sucheStatus === 'ok' && h('div', {
+      style: {
+        marginTop: '8px',
+        maxHeight: '210px',
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px'
+      }
+    }, sucheTreffer.map(it => {
+      const aktiv = !!fileBytes && fileName === it.fileName;
+      return h('div', {
+        key: it.docId,
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '10px 12px',
+          borderRadius: '12px',
+          border: aktiv ? '2px solid #bbf7d0' : '2px solid #e2e8f0',
+          background: aktiv ? '#f0fdf4' : '#fff'
+        }
+      }, h('div', {
+        style: {
+          flex: 1,
+          minWidth: 0
+        }
+      }, h('div', {
+        style: {
+          fontWeight: 900,
+          fontSize: '14px',
+          color: '#0f172a',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }
+      }, it.kunde || it.ruf || it.fileName), h('div', {
+        style: {
+          fontSize: '11px',
+          color: '#64748b'
+        }
+      }, psArchDatum(it) + (it.shopId ? ' · ' + it.shopId.replace(/-/g, ' ') : ''))), h('button', {
+        onClick: () => ladeTreffer(it),
+        disabled: !!ladeId,
+        style: {
+          flexShrink: 0,
+          padding: '9px 14px',
+          borderRadius: '10px',
+          border: 'none',
+          background: aktiv ? '#16a34a' : 'linear-gradient(135deg,#16a34a,#15803d)',
+          color: '#fff',
+          fontWeight: 900,
+          fontSize: '13px',
+          cursor: ladeId ? 'wait' : 'pointer',
+          opacity: ladeId && ladeId !== it.docId ? 0.5 : 1
+        }
+      }, ladeId === it.docId ? '…' : aktiv ? '✅' : 'Laden'));
+    })));
+  };
+
   // v53: Senden NUR mit geprüftem, vollständigem PDF.
   // Verhindert, dass ein unvollständiges OneDrive-PDF unterschrieben
   // und mit schwarzem Balken ins Archiv geschickt wird.
@@ -22683,7 +24340,7 @@ const PdfFinalizeModal = ({
       color: '#64748b',
       marginBottom: '6px'
     }
-  }, "1 · ANGEBOTS-PDF"), /*#__PURE__*/React.createElement("input", {
+  }, "1 · ANGEBOTS-PDF"), sucheAktiv && sucheUI(), /*#__PURE__*/React.createElement("input", {
     ref: fileInputRef,
     type: "file",
     accept: "application/pdf",
@@ -22977,6 +24634,7 @@ function App() {
     }
   } catch (e) {}
   const [showArchivPopup, setShowArchivPopup] = useState(false);
+  const [showArchivSuche, setShowArchivSuche] = useState(false); // v55.9: PDF-Archiv durchsuchen
   const [darkMode, setDarkMode] = useState(false); // Darkmode-Umschalter ausgeblendet – immer hell
   useEffect(() => {
     // Sicherstellen, dass kein alter Darkmode-Zustand vom Tablet hängen bleibt
@@ -23143,6 +24801,26 @@ function App() {
   // ══════════════════════════════════════════════════════════════════════
   const ARCHIVE_FLOW_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/30/workflows/6e4980d3dcb74b89bec5b9d88d14e5eb/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kMXS4jANnAUzpeQ_UtVZvcKuE4OPaBIwj00elhHAZkg';
   const ARCHIVE_FLOW_KEY = 'hetec-ps-9f3k';
+  // v55.10: KUNDENSUCHE – URL des Power-Automate-Flows "Pencil Selling PDF Archiv API V3" hier eintragen.
+  // Der Flow holt nur die PDF-Datei aus SharePoint (Öffnen/Herunterladen), liefert den Verbindungsstatus
+  // und für den einmaligen Admin-Import die Dateiliste. Gesucht wird im Firestore-Suchindex "pdf_index".
+  // Leer = PDFs werden gefunden, lassen sich aber noch nicht öffnen. Berechtigung: Firestore-Regeln + Flow
+  // prüfen serverseitig per Firebase-Login (idToken), kein Key im Code.
+  // v55.11: Nur Adressen https://….api.powerplatform.com/… bzw. https://….logic.azure.com/… werden akzeptiert
+  // (das Login-Token geht an keine andere Adresse). Die URL (mit sig=…) ist KEIN Geheimnis, das schützt:
+  // der Flow lehnt jede Anfrage ohne gültiges Firebase-Login ab. Bei erneuerter Signatur hier die neue URL eintragen.
+  const PENCIL_ARCHIV_FLOW_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/00/workflows/b2b28ed9cc334864ab329d8369175831/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=wFavr8bP07WgmS_3nEBYSCcKQ14DQpaEOV_awSr97Xo';
+  const archivCfg = () => ({
+    url: PENCIL_ARCHIV_FLOW_URL,
+    allowedIds: PS_GET_ALLOWED_SHOP_IDS(),
+    isAdmin: PS_IS_ADMIN(),
+    allShopIds: Object.keys(SHOPS)
+  });
+  window.__psArchCfgGetter = archivCfg; // v55.12: für den automatischen Index-Abgleich beim Start
+  const archivShops = () => PS_GET_ALLOWED_SHOP_IDS().map(id => ({
+    id,
+    name: SHOPS[id] && SHOPS[id].name || id
+  }));
   // ═════════════════════════════════════════════════════════
   // Folgetermin-Flow: eigener Power-Automate-Trigger NUR fuer bestaetigte
   // Folgetermine (Outlook-Termin fuer den Verkaeufer). Bewusst getrennt von
@@ -26063,7 +27741,7 @@ function App() {
   // Name für Dateinamen/Betreff säubern (keine Umlaut-/Sonderzeichen-Probleme)
   const cleanKundeName = s => {
     try {
-      return String(s || '').replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9 \-]/g, ' ') // nur sichere Zeichen
+      return String(psNormKundenname(s) || '').replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9 \-]/g, ' ') // nur sichere Zeichen
       .replace(/\s+/g, ' ').trim().replace(/ /g, '-') // Leerzeichen → Bindestrich
       .slice(0, 40);
     } catch (e) {
@@ -26084,7 +27762,7 @@ function App() {
     } catch (e) {
       decision = '';
     }
-    const name = (decision || '').toString().trim();
+    const name = psNormKundenname((decision || '').toString());
     if (!name) {
       try {
         triggerToast('Abgebrochen – ohne Kundenname wird kein PDF erstellt.');
@@ -31661,6 +33339,10 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         try {
           triggerToast('✅ Archivierung an den Flow übergeben.');
         } catch (e) {}
+        // v55.10: Suchindex-Eintrag (nur Metadaten). Darf die Archivierung nie stören oder verzögern (max. 2,5 s).
+        try {
+          await psIdxRecordArchive(dateiname, betreff);
+        } catch (e) {}
         return { ok: true, handedToFlow: true };
       } catch (e) {
         console.warn('[ARCHIV-FLOW] Upload fehlgeschlagen:', e);
@@ -31961,6 +33643,10 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       // ⚠️ GESPERRT: Dateiname NUR über buildArchivDateiname() – PENCIL_-Präfix
       // steuert die Power-Automate-Sortierung.
       const _dateiname = _type === 'abschluss' ? buildArchivDateiname('abschluss', _datum, _ruf) : buildArchivDateiname('angebot', _datum, _kunde);
+      // v55.10: Kontext für den Suchindex (Kundenname, Rufnummer, verknüpftes gespeichertes Angebot)
+      try {
+        psIdxCtxSet({ dateiname: _dateiname, kunde: _kunde, ruf: _ruf, offerId: loadedOfferId || sessionOfferId || cloudSaveIdRef.current || '' });
+      } catch (e) {}
 
       // v55.10: Bisher hing die Offline-Erkennung beim Archivieren allein
       // daran, ob der fetch() an ARCHIVE_FLOW_URL fehlschlaegt/timeoutet -
@@ -34651,10 +36337,46 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         opacity: finalizeBusyId === o.id ? 0.6 : 1
       }
     }, finalizeBusyId === o.id ? '…' : 'Laden'));
-  })))), document.body), showPdfFinalize && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PdfFinalizeModal, {
+  })))), document.body), showArchivSuche && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PsArchivSucheModal, {
+    cfg: archivCfg(),
+    shops: archivShops(),
+    cloudShop: CURRENT_SHOP_ID,
+    onLoadCloud: async id => {
+      const full = await cloudLoadOffer(id);
+      if (!full) {
+        triggerToast('⚠️ Konnte Angebot nicht laden.');
+        return false;
+      }
+      setShowArchivSuche(false);
+      setFinalizeMode(true);
+      handleLoadOffer(full);
+      return true;
+    },
+    onRestore: async offerObj => {
+      // v55.13: Arbeitskopie aus einem Archiv-PDF → komplettes Pencil Selling laden, dann normaler Finalisieren-Weg
+      // (Abschließen? → Unterschrift → Abschluss-Archiv) – derselbe Weg wie beim PDF-Upload (v52).
+      setShowArchivSuche(false);
+      try {
+        if (!offerObj.id) offerObj.id = 'offer_' + Date.now().toString(36);
+      } catch (_) {}
+      setFinalizeMode(true);
+      setTimeout(() => {
+        try {
+          handleLoadOffer(offerObj);
+        } catch (e) {
+          try {
+            triggerToast('⚠️ Wiederherstellen fehlgeschlagen: ' + (e && e.message ? e.message : ''));
+          } catch (_) {}
+        }
+      }, 150);
+      return true;
+    },
+    onClose: () => setShowArchivSuche(false)
+  }), document.body), showPdfFinalize && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PdfFinalizeModal, {
     onClose: () => setShowPdfFinalize(false),
     onSend: handlePdfFinalizeSend,
     angeboteUrl: CURRENT_ARCHIV_URL,
+    archivCfg: archivCfg(),
     onRestore: offerObj => {
       // v52: Eingebettete Arbeitskopie → komplettes Pencil Selling laden,
       // dann normaler Finalisieren-Weg (Abschließen? → Unterschrift → Abschluss-Archiv)
@@ -34877,7 +36599,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginTop: '4px',
       marginBottom: 0
     }
-  }, "SharePoint öffnet in neuem Tab")), /*#__PURE__*/React.createElement("div", {
+  }, "Kunden suchen · Angebote laden")), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '18px',
       display: 'flex',
@@ -34885,6 +36607,55 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       gap: '12px'
     }
   }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setShowArchivPopup(false);
+      setShowArchivSuche(true);
+    },
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '14px',
+      padding: '16px',
+      borderRadius: '14px',
+      border: '2px solid #93c5fd',
+      background: 'linear-gradient(135deg,#eff6ff,#dbeafe)',
+      cursor: 'pointer',
+      textAlign: 'left',
+      width: '100%'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: '42px',
+      height: '42px',
+      borderRadius: '12px',
+      background: 'linear-gradient(135deg,#2563eb,#1d4ed8)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: '20px',
+      flexShrink: 0
+    }
+  }, "🔎"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '15px',
+      fontWeight: 900,
+      color: '#1e3a8a'
+    }
+  }, "Kundensuche"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '11px',
+      color: '#1d4ed8'
+    }
+  }, "Angebote und PDF-Archiv mit Name oder Rufnummer")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: '16px',
+      color: '#2563eb'
+    }
+  }, "→")), !archivCfg().url && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (!CURRENT_ARCHIV_URL) {
         triggerToast(`Für ${CURRENT_SHOP.name} ist noch kein Archiv-Link hinterlegt.`);
@@ -34927,68 +36698,15 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       fontWeight: 900,
       color: '#064e3b'
     }
-  }, "Abschlüsse"), /*#__PURE__*/React.createElement("div", {
+  }, "SharePoint-Archiv"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: '11px',
       color: '#065f46'
     }
-  }, "Abgeschlossene Verträge")), /*#__PURE__*/React.createElement("div", {
+  }, "Ordner direkt öffnen (bis der PDF-Abruf verbunden ist)")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: '16px',
       color: '#10b981'
-    }
-  }, "→")), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      if (!CURRENT_ARCHIV_URL) {
-        triggerToast(`Für ${CURRENT_SHOP.name} ist noch kein Archiv-Link hinterlegt.`);
-        return;
-      }
-      window.open(CURRENT_ARCHIV_URL, '_blank', 'noopener');
-      setShowArchivPopup(false);
-    },
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '14px',
-      padding: '16px',
-      borderRadius: '14px',
-      border: '2px solid #fde68a',
-      background: 'linear-gradient(135deg,#fffbeb,#fef3c7)',
-      cursor: 'pointer',
-      textAlign: 'left',
-      width: '100%'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: '42px',
-      height: '42px',
-      borderRadius: '12px',
-      background: 'linear-gradient(135deg,#f59e0b,#d97706)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: '20px',
-      flexShrink: 0
-    }
-  }, "📄"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '15px',
-      fontWeight: 900,
-      color: '#78350f'
-    }
-  }, "Angebote"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '11px',
-      color: '#92400e'
-    }
-  }, "Nicht abgeschlossene Angebote")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '16px',
-      color: '#f59e0b'
     }
   }, "→")), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
@@ -35040,7 +36758,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       fontSize: '16px',
       color: '#ca8a04'
     }
-  }, "→")), /*#__PURE__*/React.createElement("button", {
+  }, "→")), !archivCfg().url && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setShowArchivPopup(false);
       openFinalizeModal();
