@@ -15,7 +15,21 @@
       '.c{background:#fff;border-radius:18px;box-shadow:0 8px 30px rgba(0,30,90,.15);padding:28px 24px;max-width:420px;width:100%;text-align:center}' +
       'h1{font-size:20px;margin:0 0 6px}p{color:#475569;font-size:14px;margin:6px 0 18px}' +
       'a.b{display:block;background:#0b3ccf;color:#fff;text-decoration:none;font-weight:800;padding:16px;border-radius:12px;font-size:16px;margin:10px 0}a.s{background:#fff;color:#0b3ccf;border:2px solid #0b3ccf}' +
-      'body>:not(.c):not(script){display:none!important}.e{color:#b91c1c;font-weight:700}.sp{width:36px;height:36px;border:4px solid #dbeafe;border-top-color:#0b3ccf;border-radius:50%;animation:r 1s linear infinite;margin:14px auto}@keyframes r{to{transform:rotate(360deg)}}</style></head>' +
+      'body>:not(.c):not(script){display:none!important}.e{color:#b91c1c;font-weight:700}.sp{width:36px;height:36px;border:4px solid #dbeafe;border-top-color:#0b3ccf;border-radius:50%;animation:r 1s linear infinite;margin:14px auto}@keyframes r{to{transform:rotate(360deg)}}</style><style id="ps-edge-swipe-fix">
+html, body, #root { overscroll-behavior: none !important; overscroll-behavior-x: none !important; -webkit-overflow-scrolling: auto; }
+body { position: fixed; inset: 0; width: 100%; }
+</style>
+<script id="ps-back-guard">
+(function () {
+  // Zurück-/Randwisch-Geste (Android/iPad) darf die installierte App nicht schließen
+  var standalone = (window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches)) || window.navigator.standalone === true;
+  if (!standalone || !window.history || !history.pushState) return;
+  function arm() { try { history.pushState({ psGuard: true }, '', location.href); } catch (e) {} }
+  arm(); arm();
+  window.addEventListener('popstate', function () { arm(); });
+})();
+</script>
+</head>' +
       '<body><div class="c"><h1>Ihr ausgefülltes Formular</h1><p>Interne Rufnummernmitnahme</p><div id="o"><div class="sp"></div><p>Wird geladen …</p></div></div>' +
       '<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"><\/script>' +
       '<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"><\/script>' +
