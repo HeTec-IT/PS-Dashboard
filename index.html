@@ -262,12 +262,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.19';
+        manifestLink.href = 'manifest.webmanifest?v=55.20';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.19').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.20').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -382,10 +382,21 @@
         var messageEl = null;
         var continueBtn = null;
         var exitBtn = null;
+        var endEl = null;
         var dialogVisible = false;
         var previousFocus = null;
         var accent = '#155eef';
 
+        // Endzeit der automatischen Wiederherstellung (Date.now() + 5 Min., minutengenau
+        // abgerundet - die angezeigte Zeit liegt nie NACH dem echten Fristende).
+        function restoreEndText() {
+            var ms = window.__PS_RESTORE_WINDOW_MS || 300000;
+            var end = new Date(Date.now() + ms);
+            var hh = ('0' + end.getHours()).slice(-2);
+            var mm = ('0' + end.getMinutes()).slice(-2);
+            return 'Deine Beratung bleibt vorübergehend gespeichert. ' +
+                   'Automatische Wiederherstellung möglich bis ' + hh + ':' + mm + ' Uhr.';
+        }
         function pushGuard() {
             try { history.pushState({ psBackGuard: 1 }, '', location.href); } catch (e) {}
         }
@@ -411,6 +422,7 @@
                         'Android erlaubt es dieser Browser-App nicht, sich selbst zu schließen. ' +
                         'Bitte nutze die Home-Geste, um die App zu verlassen. Die 5-Minuten-Wiederherstellung bleibt aktiv.';
                 }
+                if (endEl) endEl.textContent = restoreEndText() + ' Die Frist beginnt, sobald du die App wirklich verlässt.';
                 if (exitBtn) exitBtn.style.display = 'none';
                 if (continueBtn) continueBtn.focus();
             }, 400);
@@ -436,7 +448,12 @@
             messageEl = document.createElement('p');
             messageEl.id = 'ps-back-confirm-text';
             messageEl.textContent = 'Du bist mitten in einer Kundenberatung. Möchtest du die App wirklich verlassen?';
-            messageEl.style.cssText = 'font-size:15px;line-height:1.5;color:#475569;margin:0 0 22px;';
+            messageEl.style.cssText = 'font-size:15px;line-height:1.5;color:#475569;margin:0 0 12px;';
+            endEl = document.createElement('p');
+            endEl.id = 'ps-back-confirm-end';
+            endEl.style.cssText = 'font-size:14px;line-height:1.5;color:#0f172a;font-weight:600;' +
+                'margin:0 0 22px;background:#f1f5f9;border-radius:10px;padding:10px 12px;';
+            endEl.textContent = restoreEndText();
             var actions = document.createElement('div');
             actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;';
             continueBtn = document.createElement('button');
@@ -455,6 +472,7 @@
             actions.appendChild(exitBtn);
             panel.appendChild(heading);
             panel.appendChild(messageEl);
+            panel.appendChild(endEl);
             panel.appendChild(actions);
             overlay.appendChild(panel);
             // Ausserhalb tippen schliesst die Abfrage, niemals die App.
@@ -470,6 +488,7 @@
             previousFocus = document.activeElement;
             messageEl.textContent =
                 'Du bist mitten in einer Kundenberatung. Möchtest du die App wirklich verlassen?';
+            if (endEl) endEl.textContent = restoreEndText();
             exitBtn.style.display = '';
             dialogVisible = true;
             overlay.style.display = 'flex';
@@ -542,7 +561,61 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.19.0';
+    window.APP_VERSION = '55.20.0';
+    // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
+    // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
+    window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
+    // Fenstergeometrie als Schluessel. Android feuert beim Zurueckkehren aus dem
+    // Hintergrund mehrere resize-Ereignisse OHNE echte Groessenaenderung; wer den
+    // Schluessel vergleicht, kann diese Ereignisse ohne Neuzeichnen ignorieren.
+    window.__psGeomKey = function () {
+        try {
+            var v = window.visualViewport;
+            return [window.innerWidth, window.innerHeight,
+                    v ? Math.round(v.width) : 0, v ? Math.round(v.height) : 0,
+                    Math.round((window.devicePixelRatio || 1) * 100)].join('x');
+        } catch (e) { return ''; }
+    };
+    // Ruhige Ladeansicht - erscheint NUR beim echten Neustart mit gueltiger
+    // Sicherung (nie bei normalem App-Wechsel, dort laeuft die Seite einfach weiter).
+    (function () {
+        var cover = null, hardTimer = null, shownAt = 0;
+        window.__psRestoreCoverDone = function () {
+            try {
+                if (!cover) return;
+                var wait = Math.max(0, 350 - (Date.now() - shownAt)); // kein Aufblitzen
+                setTimeout(function () {
+                    var c = cover;
+                    if (!c) return;
+                    cover = null;
+                    clearTimeout(hardTimer);
+                    c.style.opacity = '0';
+                    setTimeout(function () { try { c.remove(); } catch (e) {} }, 220);
+                }, wait);
+            } catch (e) {}
+        };
+        window.__psRestoreCoverShow = function () {
+            try {
+                if (cover || !document.body) return;
+                cover = document.createElement('div');
+                cover.id = 'ps-restore-cover';
+                cover.setAttribute('role', 'status');
+                cover.setAttribute('aria-live', 'polite');
+                cover.style.cssText = 'position:fixed;inset:0;z-index:2147482000;display:flex;' +
+                    'align-items:center;justify-content:center;background:#000068;opacity:1;' +
+                    'transition:opacity .18s ease;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;';
+                cover.innerHTML = '<div style="text-align:center;color:#fff">' +
+                    '<div style="width:42px;height:42px;border:4px solid rgba(255,255,255,.22);' +
+                    'border-top-color:#3DE0FF;border-radius:50%;margin:0 auto 14px;' +
+                    'animation:ps-rc-spin .8s linear infinite"></div>' +
+                    '<div style="font-size:15px;font-weight:700">Beratung wird wiederhergestellt …</div></div>' +
+                    '<style>@keyframes ps-rc-spin{to{transform:rotate(360deg)}}</style>';
+                document.body.appendChild(cover);
+                shownAt = Date.now();
+                hardTimer = setTimeout(window.__psRestoreCoverDone, 4000); // Notbremse
+            } catch (e) {}
+        };
+    })();
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -25106,7 +25179,7 @@ function App() {
       restoreRedrawTimerRef.current = null;
     }
     const startTs = Date.now();
-    const MAX_MS = 6000; // max. 6 s lang versuchen
+    const MAX_MS = 3000; // v55.20: max. 3 s (frueher 6 s)
     const STEP_MS = 200; // alle 200 ms ein Versuch
     let stableHits = 0; // wie oft hintereinander "alles sichtbar"
 
@@ -25150,6 +25223,23 @@ function App() {
         return el.width >= 2 && el.height >= 2;
       }
     };
+    // v55.20: nur Canvas pruefen, die in der aktuellen Ansicht im DOM sind. Striche fuer
+    // Canvas anderer Ansichten (z.B. Seite 1, waehrend Seite 2 offen ist) koennen nie "sichtbar"
+    // werden - die Schleife lief frueher deshalb IMMER die vollen 6 s (ca. 30 erzwungene
+    // Komplett-Renders mit je mehreren Folge-Renders = sichtbares Flackern nach dem Neustart).
+    const canvasIsMounted = key => {
+      try {
+        return !!document.querySelector('canvas[data-stroke-key="' + key + '"], canvas[data-sit-key="' + key + '"], canvas[data-cost-key="' + key + '"]');
+      } catch (_) {
+        return false;
+      }
+    };
+    const finish = () => {
+      restoreRedrawTimerRef.current = null;
+      try {
+        if (window.__psRestoreCoverDone) window.__psRestoreCoverDone();
+      } catch (_) {}
+    };
     const tick = () => {
       // 1) Layout neu vermessen + globalen Redraw anstoßen
       try {
@@ -25159,8 +25249,11 @@ function App() {
 
       // 2) Prüfen, ob alle erwarteten Canvasse jetzt Tinte zeigen
       let allVisible = true;
+      let mountedCount = 0;
       if (keysWithInk.length > 0) {
         for (const k of keysWithInk) {
+          if (!canvasIsMounted(k)) continue;
+          mountedCount += 1;
           if (!canvasShowsInk(k)) {
             allVisible = false;
             break;
@@ -25171,21 +25264,27 @@ function App() {
       if (keysWithInk.length === 0) {
         // Nichts zu zeichnen → nach kurzem Sicherheits-Redraw fertig
         if (elapsed > 600) {
-          restoreRedrawTimerRef.current = null;
+          finish();
+          return;
+        }
+      } else if (mountedCount === 0) {
+        // Ansicht mountet evtl. noch → kurz warten, danach gibt es nichts zu pruefen
+        if (elapsed > 1500) {
+          finish();
           return;
         }
       } else if (allVisible) {
         // Alles sichtbar → noch 2× bestätigen (gegen iPad-Sub-Pixel-Flackern), dann fertig
         stableHits += 1;
         if (stableHits >= 2) {
-          restoreRedrawTimerRef.current = null;
+          finish();
           return;
         }
       } else {
         stableHits = 0;
       }
       if (elapsed >= MAX_MS) {
-        restoreRedrawTimerRef.current = null;
+        finish();
         return;
       }
       restoreRedrawTimerRef.current = setTimeout(tick, STEP_MS);
@@ -25250,7 +25349,15 @@ function App() {
         }
       });
     };
+    // v55.20: Android feuert beim Zurueckkehren aus dem Hintergrund mehrere resize-/
+    // visualViewport-Ereignisse. Jedes loeste 4 erzwungene Komplett-Renders aus. Jetzt: nur bei
+    // echter Geometrie-Aenderung und gebuendelt (ein Durchlauf statt eines pro Ereignis).
+    let lastGeom = window.__psGeomKey ? window.__psGeomKey() : '';
+    let geomTimer = null;
+    let burstTimers = [];
+    let lastRecalcAt = 0;
     const handle = () => {
+      try { if (window.__psGeomKey) lastGeom = window.__psGeomKey(); } catch (_) {}
       // === v46.1: Während ein Stift-Strich läuft NICHT neu skalieren/zeichnen ===
       // visualViewport.resize feuert auf iPad/Safari ständig während des Schreibens
       // (Pencil, Browser-UI). Das löste setRedrawCounter → canvas.width-Reset aus →
@@ -25280,37 +25387,58 @@ function App() {
       // iPad-FIX: gestaffelte Redraws damit finale Kartengroesse sicher erfasst wird.
       // redrawCanvas wartet selbst auf stabile Maße (Stabilitaets-Check) →
       // diese Aufrufe sind nur "Trigger", nicht das eigentliche Zeichnen.
-      setTimeout(() => {
+      burstTimers.forEach(clearTimeout);
+      burstTimers = [150, 400, 750].map(ms => setTimeout(() => {
         applyPortraitShift();
         setRedrawCounter(r => r + 1);
-      }, 150);
-      setTimeout(() => {
-        applyPortraitShift();
-        setRedrawCounter(r => r + 1);
-      }, 400);
-      setTimeout(() => {
-        applyPortraitShift();
-        setRedrawCounter(r => r + 1);
-      }, 750);
+      }, ms));
+    };
+
+    // Browser-resize (Fenster + visualViewport): im Hintergrund ignorieren, bei unveraenderter
+    // Geometrie ignorieren, sonst nach 120 ms EINMAL verarbeiten (Endwert statt Zwischenwerte).
+    const onViewportResize = () => {
+      if (document.visibilityState === 'hidden') return;
+      const g = window.__psGeomKey ? window.__psGeomKey() : '';
+      if (g && g === lastGeom) return;
+      clearTimeout(geomTimer);
+      geomTimer = setTimeout(() => {
+        const g2 = window.__psGeomKey ? window.__psGeomKey() : '';
+        if (g2 && g2 === lastGeom) return;
+        handle();
+      }, 120);
+    };
+    // Ausdruecklich angeforderte Neuberechnung (ps-canvas-recalc): hoechstens alle 350 ms.
+    const onRecalc = () => {
+      const now = Date.now();
+      if (now - lastRecalcAt < 350) return;
+      lastRecalcAt = now;
+      handle();
     };
 
     // initial
     handle();
-    window.addEventListener('resize', handle);
+    window.addEventListener('resize', onViewportResize);
     window.addEventListener('orientationchange', handle);
     document.addEventListener('fullscreenchange', handle);
     // iPad: nach Viewport-Anpassung (applyScale) neu zeichnen mit stabilen Maßen
-    window.addEventListener('ps-canvas-recalc', handle);
+    window.addEventListener('ps-canvas-recalc', onRecalc);
 
     // Mobile: visualViewport kann bei Vollbild/Browser-UI ändern ohne klassisches resize
     const vv = window.visualViewport;
-    if (vv && vv.addEventListener) vv.addEventListener('resize', handle);
+    if (vv && vv.addEventListener) vv.addEventListener('resize', onViewportResize);
+    // Rueckkehr in den Vordergrund: nur bei geaenderter Geometrie (z.B. im Hintergrund gedreht)
+    // neu zeichnen; bei unveraenderter Geometrie passiert nichts.
+    const onVisibleAgain = () => { if (document.visibilityState === 'visible') onViewportResize(); };
+    document.addEventListener('visibilitychange', onVisibleAgain);
     return () => {
-      window.removeEventListener('resize', handle);
+      document.removeEventListener('visibilitychange', onVisibleAgain);
+      clearTimeout(geomTimer);
+      burstTimers.forEach(clearTimeout);
+      window.removeEventListener('resize', onViewportResize);
       window.removeEventListener('orientationchange', handle);
       document.removeEventListener('fullscreenchange', handle);
-      window.removeEventListener('ps-canvas-recalc', handle);
-      if (vv && vv.removeEventListener) vv.removeEventListener('resize', handle);
+      window.removeEventListener('ps-canvas-recalc', onRecalc);
+      if (vv && vv.removeEventListener) vv.removeEventListener('resize', onViewportResize);
     };
   }, []);
   const hasMigratedSituationRef = useRef(false);
@@ -26988,7 +27116,7 @@ function App() {
     return () => clearInterval(autosaveTimerRef.current);
   }, [saveToAutosave]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (autosaveRestoredRef.current) return;
     autosaveRestoredRef.current = true;
     const uid = String(window.__PS_USER_UID || '').trim();
@@ -26997,30 +27125,14 @@ function App() {
     let raw = null;
     try { raw = localStorage.getItem(key); } catch (_) {}
 
-    // Alte gemeinsame Sicherung nur übernehmen, wenn sie eindeutig demselben
-    // Mitarbeiter gehört. Dadurch sieht kein Kollege fremde Kundendaten.
-    if (!raw) {
-      try {
-        const legacyRaw = localStorage.getItem(AUTOSAVE_LEGACY_KEY);
-        if (legacyRaw) {
-          const legacy = JSON.parse(legacyRaw);
-          const legacyAgent = String(legacy?.textData?.AgentName || '').trim();
-          if (legacyAgent && name && legacyAgent === name) {
-            legacy.ownerUid = uid;
-            legacy.ownerName = name;
-            legacy.appBrand = 'o2';
-            localStorage.setItem(key, JSON.stringify(legacy));
-            localStorage.removeItem(AUTOSAVE_LEGACY_KEY);
-            raw = JSON.stringify(legacy);
-          }
-        }
-      } catch (_) {}
-    }
+    // v55.20: Die frueher gemeinsame Sicherung 'ps_autosave_v1' wird NICHT mehr uebernommen.
+    // Sie wurde auch von der Telekom-Edition (gleiche Domain) beschrieben - eine Uebernahme
+    // haette Telekom-Kundendaten in die o2-App wiederherstellen koennen.
     if (!raw) return;
     try {
       const snap = JSON.parse(raw);
       const sameOwner = snap && snap.appBrand === 'o2' && String(snap.ownerUid || '') === uid;
-      const fresh = snap && snap.ts && Date.now() - snap.ts < 5 * 60 * 1000;
+      const fresh = snap && snap.ts && Date.now() - snap.ts < (window.__PS_RESTORE_WINDOW_MS || 5 * 60 * 1000);
       const hasContent = !!(snap?.customerSignature || snap?.emailText || snap?.beratungsId ||
         Object.values(snap?.textData || {}).some(v => String(v || '').trim()) ||
         Object.values(snap?.drawnStrokes || {}).some(v => Array.isArray(v) && v.length));
@@ -27028,6 +27140,9 @@ function App() {
         // v55.18: Innerhalb von 5 Minuten wird die Sitzung still und automatisch
         // wiederhergestellt (kein Banner/Button mehr). Aelter als 5 Minuten ->
         // verwerfen (Kundendaten sollen nicht liegen bleiben).
+        // v55.20: Ladeansicht schon VOR dem ersten Paint zeigen (useLayoutEffect), damit der
+        // leere Zwischenzustand nie sichtbar wird; sie verschwindet, sobald die Zeichnungen stehen.
+        try { if (window.__psRestoreCoverShow) window.__psRestoreCoverShow(); } catch (_) {}
         setTimeout(() => { try { handleRestoreAutosave(true); } catch (_) {} }, 700);
       } else {
         clearAutosave();
@@ -27117,6 +27232,7 @@ function App() {
       setShowRestoreToast(false);
       if (silent !== true) triggerToast(snap.reduced ? '✅ Sitzung wiederhergestellt (Bilder waren nicht im Autosave).' : '✅ Sitzung wiederhergestellt!');
     } catch (e) {
+      try { if (window.__psRestoreCoverDone) window.__psRestoreCoverDone(); } catch (_) {}
       triggerToast('Wiederherstellung fehlgeschlagen.');
     }
   };
@@ -28957,8 +29073,11 @@ function App() {
       dprRef.current = dpr;
       const oldWidth = canvas.width;
       const oldHeight = canvas.height;
-      const newWidth = rect.width * dpr;
-      const newHeight = rect.height * dpr;
+      // v55.20: auf ganze Pixel runden. canvas.width schneidet Nachkommastellen ab, der
+      // Vergleich mit dem Kommawert war deshalb IMMER ungleich -> bei jedem resize wurden alle
+      // Stift-Canvas geleert und erst nach einem React-Render neu gezeichnet (Flackern).
+      const newWidth = Math.round(rect.width * dpr);
+      const newHeight = Math.round(rect.height * dpr);
       if (oldWidth !== newWidth || oldHeight !== newHeight) {
         canvas.width = newWidth;
         canvas.height = newHeight;
@@ -29001,11 +29120,24 @@ function App() {
         setRedrawCounter(r => r + 1);
       }, 220);
     }
+    // v55.20: Browser-resize nur bei echter Geometrie-Aenderung verarbeiten (nicht im
+    // Hintergrund, nicht bei den Schein-Ereignissen beim Zurueckkehren).
+    let lastGeomAll = window.__psGeomKey ? window.__psGeomKey() : '';
+    const onResizeGuarded = () => {
+      if (document.visibilityState === 'hidden') return;
+      const g = window.__psGeomKey ? window.__psGeomKey() : '';
+      if (g && g === lastGeomAll) return;
+      lastGeomAll = g;
+      resizeAll();
+    };
     resizeAll();
-    window.addEventListener('resize', resizeAll);
+    window.addEventListener('resize', onResizeGuarded);
     window.addEventListener('ps-canvas-recalc', resizeAll);
+    const onVisibleAgainAll = () => { if (document.visibilityState === 'visible') onResizeGuarded(); };
+    document.addEventListener('visibilitychange', onVisibleAgainAll);
     return () => {
-      window.removeEventListener('resize', resizeAll);
+      document.removeEventListener('visibilitychange', onVisibleAgainAll);
+      window.removeEventListener('resize', onResizeGuarded);
       window.removeEventListener('ps-canvas-recalc', resizeAll);
     };
   }, [emailMode, beratungsIdMode, providerMode, isCustomProvider, notesMode, skipReasonMode, view, inputMode, sitLayoutMode, currentSitStep]);
@@ -35583,7 +35715,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.19"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.20"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -42624,7 +42756,8 @@ function __startPencilAppWhenReady(attempt = 0) {
     }
     // Login-/Statusanzeige aus dem Auth-Gate entfernen, bevor React übernimmt.
     // So startet createRoot immer auf einem sauberen Container.
-    try { rootEl.innerHTML = ''; } catch (e) {}
+    // v55.20: Gate-Anzeige NICHT vorab leeren - React ersetzt den Container beim ersten Commit
+    // selbst. Das vorherige leere #root konnte als weisser Zwischenframe aufblitzen.
     const root = ReactDOM.createRoot(rootEl);
     root.render(/*#__PURE__*/React.createElement(App, null));
   } catch (err) {
