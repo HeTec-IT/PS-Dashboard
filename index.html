@@ -365,6 +365,54 @@
     })();
     </script>
 
+    <!-- v60: Nur bewusst pausierte Beratungen ueberleben einen Neustart. -->
+    <script>
+    (function () {
+        var prefix = 'ps_o2_autosave_v2_';
+        var pauseKey = 'ps_o2_manual_pause_v1';
+        function keys() {
+            var list = [];
+            try {
+                for (var i = 0; i < localStorage.length; i++) {
+                    var key = localStorage.key(i);
+                    if (key && key.indexOf(prefix) === 0) list.push(key);
+                }
+            } catch (_) {}
+            return list;
+        }
+        function clear() {
+            try {
+                keys().forEach(function (key) { localStorage.removeItem(key); });
+                localStorage.removeItem(pauseKey);
+                localStorage.removeItem('ps_autosave_v1');
+            } catch (_) {}
+        }
+        function validPause() {
+            try {
+                var info = JSON.parse(localStorage.getItem(pauseKey) || 'null');
+                var t = Number(info && info.ts);
+                if (!info || !info.uid || !Number.isFinite(t) || t <= 0 ||
+                    t > Date.now() || Date.now() - t >= 300000) return null;
+                return info;
+            } catch (_) { return null; }
+        }
+        window.__psIsManualPause = function (snap) {
+            var info = validPause();
+            return !!(info && snap && Number(snap.ts) === Number(info.ts) &&
+                String(snap.ownerUid || '') === String(info.uid));
+        };
+        window.__psClearActiveSession = function () {
+            window.__PS_WIPING = true;
+            window.__PS_PAUSED = false;
+            window.__PS_ALLOW_SNAPSHOT = false;
+            clear();
+        };
+        // Login, Cloud-Angebote, Archiv und geparkte Abschluesse bleiben erhalten.
+        if (validPause()) window.__PS_PAUSED = true;
+        else clear();
+    })();
+    </script>
+
     <!-- ===== ZURUECK-BESTAETIGUNG: installierte Pencil-PWA ===== -->
     <!-- Nutzt genau den bisherigen History-Guard (keine zweite Sperre).
          Home-Taste, App-Wechsel und vorhandener 5-Minuten-Autosave bleiben unveraendert.
@@ -394,9 +442,10 @@
         var pausedTs = 0;
         var accent = '#155eef';
         var SNAP_PREFIX = 'ps_o2_autosave_v2_';
+        var PAUSE_KEY = 'ps_o2_manual_pause_v1';
         var APP_NAME = 'Pencil o2';
         var DEFAULT_MSG = 'Du bist mitten in einer Kundenberatung. Möchtest du die App wirklich verlassen?';
-        var IDLE_TEXT = 'Beim Verlassen (Home-Geste) laufen 5 Minuten zur Wiederherstellung. „App pausieren“ startet die Frist sofort, „App beenden“ löscht alle Eingaben und schließt die App.';
+        var IDLE_TEXT = 'Nur „App pausieren“ sichert die Beratung für maximal 5 Minuten. App beenden oder Refresh löscht alle Eingaben. Ohne Pause wird beim nächsten App-Start eine leere Beratung geladen.';
 
         function windowMs() {
             var configured = Number(window.__PS_RESTORE_WINDOW_MS);
@@ -429,6 +478,7 @@
             try {
                 snapKeys().forEach(function (k) { localStorage.removeItem(k); });
                 localStorage.removeItem('ps_autosave_v1');
+                localStorage.removeItem(PAUSE_KEY);
             } catch (e) {}
         }
         function endText() {
@@ -444,7 +494,12 @@
         }
         function refreshEnd() {
             // Abgelaufene Pausen-Sicherung sofort entfernen (Kundendaten sollen nicht liegen bleiben).
-            if (paused && pausedTs && Date.now() >= pausedTs + windowMs()) wipeSnaps();
+            if (paused && pausedTs && Date.now() >= pausedTs + windowMs()) {
+                window.__psClearActiveSession();
+                window.__psIntentionalReload = true;
+                location.reload();
+                return;
+            }
             if (endEl) endEl.textContent = endText();
         }
         function pushGuard() {
@@ -453,7 +508,14 @@
         function hideDialog() {
             if (!overlay) return;
             dialogVisible = false;
-            // „Weiter beraten“ beendet die Pause: automatische Sicherung läuft wieder.
+            // Abgelaufene Pause niemals fortsetzen.
+            if (paused && pausedTs && Date.now() >= pausedTs + windowMs()) {
+                window.__psClearActiveSession();
+                window.__psIntentionalReload = true;
+                location.reload();
+                return;
+            }
+            if (paused) wipeSnaps();
             paused = false;
             pausedTs = 0;
             window.__PS_PAUSED = false;
@@ -469,11 +531,22 @@
         // App pausieren: Sicherung JETZT schreiben (Zeitstempel = jetzt) und weitere Sicherungen
         // sperren, damit die 5 Minuten exakt ab diesem Moment laufen.
         function pauseApp() {
+            // Einmalige Sicherung nur nach ausdruecklichem Klick auf Pausieren.
+            wipeSnaps();
             window.__PS_PAUSED = false;
+            window.__PS_ALLOW_SNAPSHOT = true;
             try { document.dispatchEvent(new Event('ps-save-now')); } catch (e) {}
+            window.__PS_ALLOW_SNAPSHOT = false;
             pausedTs = snapTime();
-            paused = true;
-            window.__PS_PAUSED = true;
+            paused = pausedTs > 0;
+            if (paused) {
+                try {
+                    localStorage.setItem(PAUSE_KEY, JSON.stringify({
+                        ts: pausedTs, uid: String(window.__PS_USER_UID || '').trim()
+                    }));
+                } catch (_) { paused = false; wipeSnaps(); }
+            }
+            window.__PS_PAUSED = paused;
             if (messageEl) {
                 messageEl.textContent = 'Pausiert. Bitte nutze jetzt die Home-Geste, um die App zu verlassen. ' +
                     'Die Beratung bleibt bis zum Ablauf der Frist wiederherstellbar.';
@@ -521,10 +594,8 @@
         // Wo der Browser das Schliessen verbietet (Android/iPad-PWA), bleibt die Abdeckung "beendet".
         function endApp() {
             if (!window.confirm('App beenden? Alle Eingaben dieser Beratung werden gelöscht und die App wird geschlossen.')) return;
-            window.__PS_WIPING = true;
-            window.__PS_PAUSED = false;
+            window.__psClearActiveSession();
             window.__psIntentionalReload = true;
-            wipeSnaps();
             try { window.removeEventListener('popstate', onBack); } catch (e) {}
             try { window.close(); } catch (e) {}
             window.setTimeout(function () {
@@ -532,10 +603,12 @@
                 showEndedScreen();
             }, 400);
         }
-        // App Refresh: Hard Reload (frische Version, eigener Cache/Service Worker geleert).
+        // Refresh startet eine leere Beratung, ohne Login/Archiv zu veraendern.
         function refreshApp() {
-            if (typeof window.__psHardReload === 'function') window.__psHardReload(refreshBtn);
-            else { try { location.reload(); } catch (e) {} }
+            if (!window.confirm('App neu starten? Alle Eingaben der aktuellen Beratung werden unwiderruflich gelöscht.')) return;
+            window.__psClearActiveSession();
+            window.__psIntentionalReload = true;
+            location.reload();
         }
         function makeBtn(label, color, border, handler) {
             var b = document.createElement('button');
@@ -583,7 +656,7 @@
             continueBtn.addEventListener('click', hideDialog);
             pauseBtn = makeBtn('App pausieren', '#334155', '#cbd5e1', pauseApp);
             endBtn = makeBtn('App beenden', '#b42318', '#fda29b', endApp);
-            refreshBtn = makeBtn('App Refresh', '#334155', '#cbd5e1', refreshApp);
+            refreshBtn = makeBtn('App Refresh (Daten löschen)', '#334155', '#cbd5e1', refreshApp);
             actions.appendChild(continueBtn);
             actions.appendChild(pauseBtn);
             actions.appendChild(endBtn);
@@ -27191,7 +27264,7 @@ function App() {
   }, []);
   const saveToAutosave = React.useCallback(() => {
     // Beenden/Pausieren (Verlassen-Dialog): wipe = nichts mehr schreiben, pause = Stand einfrieren.
-    if (window.__PS_WIPING || window.__PS_PAUSED) return;
+    if (window.__PS_WIPING || window.__PS_PAUSED || !window.__PS_ALLOW_SNAPSHOT) return;
     const uid = String(window.__PS_USER_UID || '').trim();
     if (!uid) return;
     const snap = {
@@ -27236,13 +27309,11 @@ function App() {
     try {
       localStorage.removeItem(getAutosaveKey());
       localStorage.removeItem(AUTOSAVE_LEGACY_KEY);
+      localStorage.removeItem('ps_o2_manual_pause_v1');
     } catch (e) {}
   };
 
-  React.useEffect(() => {
-    autosaveTimerRef.current = setInterval(() => { if (document.visibilityState !== 'hidden') saveToAutosave(); }, 30000);
-    return () => clearInterval(autosaveTimerRef.current);
-  }, [saveToAutosave]);
+  // Kein periodischer Autosave. Nur bewusste Pausen sind wiederherstellbar.
 
   React.useLayoutEffect(() => {
     if (autosaveRestoredRef.current) return;
@@ -27263,7 +27334,7 @@ function App() {
       const hasContent = !!(snap?.customerSignature || snap?.emailText || snap?.beratungsId ||
         Object.values(snap?.textData || {}).some(v => String(v || '').trim()) ||
         Object.values(snap?.drawnStrokes || {}).some(v => Array.isArray(v) && v.length));
-      if (sameOwner && hasContent && fresh) {
+      if (sameOwner && hasContent && fresh && window.__psIsManualPause(snap)) {
         // v55.18: Innerhalb von 5 Minuten wird die Sitzung still und automatisch
         // wiederhergestellt (kein Banner/Button mehr). Aelter als 5 Minuten ->
         // verwerfen (Kundendaten sollen nicht liegen bleiben).
@@ -27300,6 +27371,7 @@ function App() {
   const handleRestoreAutosave = (silent) => {
     try {
       const snap = JSON.parse(localStorage.getItem(getAutosaveKey()) || '{}');
+      if (!window.__psIsManualPause(snap)) { clearAutosave(); throw new Error('Keine bewusste Pause'); }
       const uid = String(window.__PS_USER_UID || '').trim();
       if (!snap || snap.appBrand !== 'o2' || String(snap.ownerUid || '') !== uid) {
         clearAutosave();
@@ -27366,6 +27438,8 @@ function App() {
       if (snap.offerLayoutMode) setOfferLayoutMode(snap.offerLayoutMode);
       if (snap.view) setView(snap.view);
       forceRestoreRedraw(snap.drawnStrokes);
+      clearAutosave();
+      window.__PS_PAUSED = false;
       setShowRestoreToast(false);
       if (silent !== true) triggerToast(snap.reduced ? '✅ Sitzung wiederhergestellt (Bilder waren nicht im Autosave).' : '✅ Sitzung wiederhergestellt!');
     } catch (e) {
