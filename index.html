@@ -362,12 +362,13 @@
         }
     })();
     </script>
-    <!-- ===== ZURUECK-SCHUTZ: App schliesst nicht beim ersten Zurueck ===== -->
+    <!-- ===== ZURUECK-SPERRE: Zurueck-Taste/-Geste schliesst die App nie ===== -->
     <!--
-      Nur in der installierten App (standalone). Erster Zurueck-Tipp zeigt
-      "Zum Beenden nochmal zurueck", erst der zweite innerhalb von 2,5 s
-      beendet die App. Greift nicht in den Ablauf der App ein (keine
-      Datenverluste), verhindert nur versehentliches Schliessen.
+      Nur in der installierten App (standalone). Die Sperre wird erst bei der
+      ersten Beruehrung scharf geschaltet, weil Chrome Verlaufs-Eintraege ohne
+      Nutzer-Interaktion beim Zurueck ueberspringt. Danach legt jedes Zurueck
+      sofort wieder einen neuen Eintrag an -> es passiert nichts, die App bleibt
+      offen. Beenden: Home-Geste oder Uebersicht (Recents).
     -->
     <script>
     (function () {
@@ -377,44 +378,24 @@
             if (!standalone || !window.history || !history.pushState) return;
         } catch (e) { return; }
 
-        var lastBack = 0;
-        var toastEl = null;
-        var toastTimer = null;
+        var armed = false;
 
-        function arm() {
+        function push() {
             try { history.pushState({ psBackGuard: 1 }, '', location.href); } catch (e) {}
         }
 
-        function showToast(text) {
-            try {
-                if (!toastEl) {
-                    toastEl = document.createElement('div');
-                    toastEl.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);' +
-                        'z-index:99999;background:rgba(15,23,42,.92);color:#fff;font:600 14px/1.4 -apple-system,sans-serif;' +
-                        'padding:10px 18px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.3);' +
-                        'pointer-events:none;transition:opacity .2s;opacity:0;white-space:nowrap;';
-                    document.body.appendChild(toastEl);
-                }
-                toastEl.textContent = text;
-                toastEl.style.opacity = '1';
-                clearTimeout(toastTimer);
-                toastTimer = setTimeout(function () { toastEl.style.opacity = '0'; }, 2500);
-            } catch (e) {}
+        function arm() {
+            if (armed) return;
+            armed = true;
+            ['pointerup', 'touchend', 'click', 'keydown'].forEach(function (ev) {
+                document.removeEventListener(ev, arm, true);
+            });
+            push();
+            window.addEventListener('popstate', push);
         }
 
-        try { history.replaceState({ psBase: 1 }, '', location.href); } catch (e) {}
-        arm();
-
-        window.addEventListener('popstate', function () {
-            var now = Date.now();
-            if (now - lastBack < 2500) {
-                // Zweites Zurueck: App darf schliessen
-                try { history.back(); } catch (e) {}
-                return;
-            }
-            lastBack = now;
-            arm();
-            if (document.body) showToast('Zum Beenden nochmal zurück');
+        ['pointerup', 'touchend', 'click', 'keydown'].forEach(function (ev) {
+            document.addEventListener(ev, arm, true);
         });
     })();
     </script>
