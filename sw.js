@@ -1,6 +1,6 @@
 // Pencil Selling – o2 – Service Worker
 // Beim Update NUR diese Versionsnummer hochzählen -> alte Caches werden entfernt.
-const CACHE = "pencil-o2-v4";
+const CACHE = "pencil-o2-v5";
 const SHELL = ["./", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -19,7 +19,11 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   e.respondWith(
-    fetch(e.request)
+    // Seiten (HTML) immer beim Server nachfragen -> Update kommt sofort an,
+    // nicht erst nach Ablauf des GitHub-Pages-Caches (10 Min.).
+    (e.request.mode === "navigate" || e.request.destination === "document"
+      ? fetch(e.request.url, { cache: "no-cache" })
+      : fetch(e.request))
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});

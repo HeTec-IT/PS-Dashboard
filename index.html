@@ -262,12 +262,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.17';
+        manifestLink.href = 'manifest.webmanifest?v=55.18';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.17').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.18').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -374,6 +374,8 @@
     (function () {
         try {
             var standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                              window.matchMedia('(display-mode: fullscreen)').matches ||
+                              window.matchMedia('(display-mode: minimal-ui)').matches ||
                               window.navigator.standalone === true;
             if (!standalone || !window.history || !history.pushState) return;
         } catch (e) { return; }
@@ -439,7 +441,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.14.0';
+    window.APP_VERSION = '55.18.0';
     (function(){
         try {
             var KEY = 'pencil_app_version_o2';
@@ -26852,7 +26854,7 @@ function App() {
       displayLanguage, translatedText, staticTranslations, showSecondYear,
       gutschriftBetrag, gutschriftManuell, gutschriftRateManuell,
       showSavingsBlock, dismissSavingsHint, showCostSection,
-      sitLayoutMode, offerLayoutMode
+      sitLayoutMode, offerLayoutMode, view
     };
     const key = getAutosaveKey();
     try {
@@ -26875,13 +26877,13 @@ function App() {
         }
       }
     }
-  }, [textData, drawnStrokes, customerType, segment, packagePrices, providerSelect, customProvider, isCustomProvider, costState, offerData, canvasStatus, wlanRecommendation, speedRecommendation, emailText, beratungsId, skipReason, customerSignature, canvasHtml, wlanSnapshot, techUebernommen, netBundleMatched, tvSnapshot, canvasImages, imageTransform, checkedTechs, followUpsByKey, displayLanguage, translatedText, staticTranslations, showSecondYear, gutschriftBetrag, gutschriftManuell, gutschriftRateManuell, showSavingsBlock, dismissSavingsHint, showCostSection, sitLayoutMode, offerLayoutMode, getAutosaveKey, triggerToast]);
+  }, [textData, drawnStrokes, customerType, segment, packagePrices, providerSelect, customProvider, isCustomProvider, costState, offerData, canvasStatus, wlanRecommendation, speedRecommendation, emailText, beratungsId, skipReason, customerSignature, canvasHtml, wlanSnapshot, techUebernommen, netBundleMatched, tvSnapshot, canvasImages, imageTransform, checkedTechs, followUpsByKey, displayLanguage, translatedText, staticTranslations, showSecondYear, gutschriftBetrag, gutschriftManuell, gutschriftRateManuell, showSavingsBlock, dismissSavingsHint, showCostSection, sitLayoutMode, offerLayoutMode, getAutosaveKey, triggerToast, view]);
   const clearAutosave = () => {
     try { localStorage.removeItem(getAutosaveKey()); } catch (e) {}
   };
 
   React.useEffect(() => {
-    autosaveTimerRef.current = setInterval(saveToAutosave, 30000);
+    autosaveTimerRef.current = setInterval(() => { if (document.visibilityState !== 'hidden') saveToAutosave(); }, 30000);
     return () => clearInterval(autosaveTimerRef.current);
   }, [saveToAutosave]);
 
@@ -26922,15 +26924,10 @@ function App() {
         Object.values(snap?.textData || {}).some(v => String(v || '').trim()) ||
         Object.values(snap?.drawnStrokes || {}).some(v => Array.isArray(v) && v.length));
       if (sameOwner && hasContent && fresh) {
-        // v55.8: Kein stilles Auto-Laden mehr - stattdessen immer kurz
-        // fragen (bestehendes Banner: "Laden" / "x"). Grund: beim
-        // simplen Home-Button-Wechsel bleibt die Seite ohnehin im
-        // Speicher (kein Reload, kein Datenverlust) - dieser Zweig
-        // greift nur, wenn die Seite WIRKLICH neu geladen wurde. Aelter
-        // als 5 Minuten -> immer verwerfen, keine Nachfrage (dient nur
-        // dem kurzen Wechsel zur o2-/Telekom-App waehrend der
-        // Vertragsunterschrift).
-        setShowRestoreToast(true);
+        // v55.18: Innerhalb von 5 Minuten wird die Sitzung still und automatisch
+        // wiederhergestellt (kein Banner/Button mehr). Aelter als 5 Minuten ->
+        // verwerfen (Kundendaten sollen nicht liegen bleiben).
+        setTimeout(() => { try { handleRestoreAutosave(true); } catch (_) {} }, 700);
       } else {
         clearAutosave();
       }
@@ -26955,7 +26952,7 @@ function App() {
     };
   }, [saveToAutosave]);
 
-  const handleRestoreAutosave = () => {
+  const handleRestoreAutosave = (silent) => {
     try {
       const snap = JSON.parse(localStorage.getItem(getAutosaveKey()) || '{}');
       const uid = String(window.__PS_USER_UID || '').trim();
@@ -27014,9 +27011,10 @@ function App() {
       if (snap.showCostSection !== undefined) setShowCostSection(snap.showCostSection);
       if (snap.sitLayoutMode) setSitLayoutMode(snap.sitLayoutMode);
       if (snap.offerLayoutMode) setOfferLayoutMode(snap.offerLayoutMode);
+      if (snap.view) setView(snap.view);
       forceRestoreRedraw(snap.drawnStrokes);
       setShowRestoreToast(false);
-      triggerToast(snap.reduced ? '✅ Sitzung wiederhergestellt (Bilder waren nicht im Autosave).' : '✅ Sitzung wiederhergestellt!');
+      if (silent !== true) triggerToast(snap.reduced ? '✅ Sitzung wiederhergestellt (Bilder waren nicht im Autosave).' : '✅ Sitzung wiederhergestellt!');
     } catch (e) {
       triggerToast('Wiederherstellung fehlgeschlagen.');
     }
@@ -35475,16 +35473,16 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     className: isOffline ? "ps-wifi-blink" : ""
   })), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 8,
+      fontSize: 10,
       fontWeight: 700,
-      color: '#cbd5e1',
+      color: '#64748b',
       letterSpacing: '0.05em',
       userSelect: 'none',
       pointerEvents: 'none',
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.17"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.18"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
