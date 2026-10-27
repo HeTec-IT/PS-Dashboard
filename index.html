@@ -30677,10 +30677,12 @@ function App() {
     } catch (e) {}
 
     // Styles kopieren und Print-Regeln immer aktiv machen
-    const styles = Array.from(document.querySelectorAll('style')).map(s => s.textContent || '').filter(Boolean).join('\n\n');
+    // FIX (Wisch-Fix 25.10.2026): #ps-edge-swipe-fix (body{position:fixed;inset:0}) nicht in den PDF-Klon kopieren.
+    const styles = Array.from(document.querySelectorAll('style')).filter(s => s.id !== 'ps-edge-swipe-fix').map(s => s.textContent || '').filter(Boolean).join('\n\n');
     const stylesPrintAll = styles.replace(/@media\s+print/g, '@media all');
     const styleEl = doc.createElement('style');
     styleEl.textContent = stylesPrintAll + "\n\n" + `html,body{background:#fff;margin:0;padding:0;width:${SHARE_DOC_WIDTH_PX}px;max-width:${SHARE_DOC_WIDTH_PX}px;overflow:hidden;height:auto;}
+         html,body{position:static !important;inset:auto !important;overscroll-behavior:auto !important;}
          html{height:auto;}
          /* Share-Modus: Header sichtbar, keine doppelten Links-Offsets innerhalb der Views */
          .pdf-share-mode .print-page-header{display:flex !important;}
@@ -32455,6 +32457,16 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         compress: true
       }
     };
+    // FIX: Der Wisch-Fix-Stil fixiert body (position:fixed). html2pdf/html2canvas rastern in der Hauptseite;
+    // auf dem iPad (Safari) kam das PDF dadurch WEISS an. Stil nur für die Dauer des Exports aus der Seite nehmen.
+    let __wischStyle = null, __wischParent = null, __wischNext = null;
+    try {
+      const __w = document.getElementById('ps-edge-swipe-fix');
+      if (__w && __w.parentNode) {
+        __wischStyle = __w; __wischParent = __w.parentNode; __wischNext = __w.nextSibling;
+        __w.parentNode.removeChild(__w);
+      }
+    } catch (_) {}
     try {
       // --- HARD LIMIT: keep ONLY first 4 pages in the generated PDF (Share) ---
       const sourceEl = doc.getElementById('pdf-content') || doc.getElementById('print-container') || doc.body;
@@ -32591,6 +32603,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       }
       return blob;
     } finally {
+      try {
+        if (__wischStyle && __wischParent && !document.getElementById('ps-edge-swipe-fix')) {
+          __wischParent.insertBefore(__wischStyle, __wischNext && __wischNext.parentNode === __wischParent ? __wischNext : null);
+        }
+      } catch (_) {}
       // v56 ANDROID-DRUCK-FIX: ursprünglichen Viewport wiederherstellen
       try {
         if (__vpRestore !== null) {
