@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
+    <!-- Datenschutz: alte markenuebergreifende Sicherung sofort entfernen, auch vor Login. -->
+    <script>try { localStorage.removeItem('ps_autosave_v1'); } catch (_) {}</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* Kunden-Download (QR) */
@@ -384,18 +386,21 @@
         var exitBtn = null;
         var endEl = null;
         var dialogVisible = false;
+        var endRefreshTimer = null;
         var previousFocus = null;
         var accent = '#155eef';
 
-        // Endzeit der automatischen Wiederherstellung (Date.now() + 5 Min., minutengenau
-        // abgerundet - die angezeigte Zeit liegt nie NACH dem echten Fristende).
+        // Noch keine Frist im Dialog: Diese beginnt erst beim tatsaechlichen Verlassen.
+        // Deshalb nur die laufend aktualisierte VORAUSSICHTLICHE Endzeit zeigen.
         function restoreEndText() {
-            var ms = window.__PS_RESTORE_WINDOW_MS || 300000;
+            var configured = Number(window.__PS_RESTORE_WINDOW_MS);
+            var ms = Number.isFinite(configured) && configured > 0 ? configured : 300000;
             var end = new Date(Date.now() + ms);
             var hh = ('0' + end.getHours()).slice(-2);
             var mm = ('0' + end.getMinutes()).slice(-2);
-            return 'Deine Beratung bleibt vorübergehend gespeichert. ' +
-                   'Automatische Wiederherstellung möglich bis ' + hh + ':' + mm + ' Uhr.';
+            var ss = ('0' + end.getSeconds()).slice(-2);
+            return 'Bei Verlassen jetzt: Wiederherstellung voraussichtlich bis ' +
+                   hh + ':' + mm + ':' + ss + ' Uhr. Die 5 Minuten starten erst beim tatsächlichen Verlassen.';
         }
         function pushGuard() {
             try { history.pushState({ psBackGuard: 1 }, '', location.href); } catch (e) {}
@@ -403,6 +408,7 @@
         function hideDialog() {
             if (!overlay) return;
             dialogVisible = false;
+            if (endRefreshTimer) { clearInterval(endRefreshTimer); endRefreshTimer = null; }
             overlay.style.display = 'none';
             if (exitBtn) exitBtn.style.display = '';
             try {
@@ -412,6 +418,7 @@
             } catch (e) {}
         }
         function tryExit() {
+            if (endEl) endEl.textContent = restoreEndText();
             // window.close() funktioniert nur, wenn der Browser das Schliessen erlaubt.
             // Andernfalls bewahren wir die Beratung und zeigen den sicheren Home-Weg.
             try { window.close(); } catch (e) {}
@@ -422,7 +429,7 @@
                         'Android erlaubt es dieser Browser-App nicht, sich selbst zu schließen. ' +
                         'Bitte nutze die Home-Geste, um die App zu verlassen. Die 5-Minuten-Wiederherstellung bleibt aktiv.';
                 }
-                if (endEl) endEl.textContent = restoreEndText() + ' Die Frist beginnt, sobald du die App wirklich verlässt.';
+                if (endEl) endEl.textContent = restoreEndText();
                 if (exitBtn) exitBtn.style.display = 'none';
                 if (continueBtn) continueBtn.focus();
             }, 400);
@@ -492,6 +499,12 @@
             exitBtn.style.display = '';
             dialogVisible = true;
             overlay.style.display = 'flex';
+            if (endRefreshTimer) clearInterval(endRefreshTimer);
+            endRefreshTimer = setInterval(function () {
+                if (dialogVisible && endEl && document.visibilityState !== 'hidden') {
+                    endEl.textContent = restoreEndText();
+                }
+            }, 1000);
             try { continueBtn.focus({ preventScroll: true }); } catch (e) {}
         }
         function onBack() {
@@ -561,7 +574,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.20.0';
+    window.APP_VERSION = '55.20.1';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -27108,7 +27121,10 @@ function App() {
     }
   }, [textData, drawnStrokes, customerType, segment, packagePrices, providerSelect, customProvider, isCustomProvider, costState, offerData, canvasStatus, wlanRecommendation, speedRecommendation, emailText, beratungsId, skipReason, customerSignature, canvasHtml, wlanSnapshot, techUebernommen, netBundleMatched, tvSnapshot, canvasImages, imageTransform, checkedTechs, followUpsByKey, displayLanguage, translatedText, staticTranslations, showSecondYear, gutschriftBetrag, gutschriftManuell, gutschriftRateManuell, showSavingsBlock, dismissSavingsHint, showCostSection, sitLayoutMode, offerLayoutMode, getAutosaveKey, triggerToast, view]);
   const clearAutosave = () => {
-    try { localStorage.removeItem(getAutosaveKey()); } catch (e) {}
+    try {
+      localStorage.removeItem(getAutosaveKey());
+      localStorage.removeItem(AUTOSAVE_LEGACY_KEY);
+    } catch (e) {}
   };
 
   React.useEffect(() => {
@@ -27125,9 +27141,8 @@ function App() {
     let raw = null;
     try { raw = localStorage.getItem(key); } catch (_) {}
 
-    // v55.20: Die frueher gemeinsame Sicherung 'ps_autosave_v1' wird NICHT mehr uebernommen.
-    // Sie wurde auch von der Telekom-Edition (gleiche Domain) beschrieben - eine Uebernahme
-    // haette Telekom-Kundendaten in die o2-App wiederherstellen koennen.
+    // Die alte gemeinsame Sicherung nie uebernehmen und aus Datenschutzgruenden loeschen.
+    try { localStorage.removeItem(AUTOSAVE_LEGACY_KEY); } catch (_) {}
     if (!raw) return;
     try {
       const snap = JSON.parse(raw);
@@ -27175,6 +27190,14 @@ function App() {
       if (!snap || snap.appBrand !== 'o2' || String(snap.ownerUid || '') !== uid) {
         clearAutosave();
         throw new Error('Sicherung gehört zu einem anderen Benutzer');
+      }
+      // Abgelaufene Sicherungen auch beim verzoegerten/manuellen Laden ablehnen.
+      const savedAt = Number(snap.ts);
+      const restoreWindow = window.__PS_RESTORE_WINDOW_MS || 5 * 60 * 1000;
+      if (!Number.isFinite(savedAt) || savedAt <= 0 ||
+          savedAt > Date.now() || Date.now() - savedAt >= restoreWindow) {
+        clearAutosave();
+        throw new Error('Sicherung aelter als 5 Minuten');
       }
       resetCustomerState({ keepView: true, keepOfferLinks: false });
       if (snap.textData) {
