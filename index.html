@@ -410,6 +410,18 @@
         // Login, Cloud-Angebote, Archiv und geparkte Abschluesse bleiben erhalten.
         if (validPause()) window.__PS_PAUSED = true;
         else clear();
+        // Verlaesst die WebView wirklich die Seite, aktive Beratung beseitigen.
+        // Reine App-Wechsel / System-Teilen-Menues loesen kein pagehide aus.
+        window.addEventListener('pagehide', function () {
+            if (!window.__PS_PAUSED && !window.__PS_WIPING) window.__psClearActiveSession();
+        });
+        // Bfcache kann sonst ein altes React-Bild statt eines neuen Starts anzeigen.
+        window.addEventListener('pageshow', function (e) {
+            if (e.persisted && window.__PS_WIPING) {
+                window.__psIntentionalReload = true;
+                location.reload();
+            }
+        });
     })();
     </script>
 
