@@ -264,12 +264,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.20';
+        manifestLink.href = 'manifest.webmanifest?v=55.21';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.20').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.21').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -574,7 +574,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.20.1';
+    window.APP_VERSION = '55.21';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -35738,7 +35738,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.20"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.21"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -43068,29 +43068,98 @@ function __psDenyAccess(message, reloadAfter) {
   } catch (e) {}
 }
 
+// Update-Button (Header, links neben Abmelden): erzwingt einen Hard Reload wie
+// Strg+Umschalt+R. Holt die HTML-Datei am HTTP-Cache vorbei frisch vom Server,
+// meldet NUR den eigenen Service Worker ab und löscht NUR die eigenen Caches
+// (o2- und Telekom-App teilen sich die Domain). Anmeldung und lokale Daten
+// (localStorage/IndexedDB) bleiben unangetastet. Ohne Verbindung wird nichts
+// gelöscht, damit die App danach nicht leer dasteht.
+var __PS_CACHE_PREFIX = 'pencil-o2-';
+function __psHardReload(btn) {
+  if (window.__psUpdating) return;
+  if (!window.confirm('Update laden? Die App wird neu gestartet.')) return;
+  window.__psUpdating = true;
+  var svg = btn && btn.querySelector ? btn.querySelector('svg') : null;
+  if (svg) svg.style.animation = 'spin .8s linear infinite';
+  function fail() {
+    window.__psUpdating = false;
+    if (svg) svg.style.animation = '';
+    try { window.alert('Update nicht möglich – keine Verbindung zum Server. Bitte Internet prüfen.'); } catch (e) {}
+  }
+  var ctrl = null, timer = null;
+  try { ctrl = new AbortController(); timer = setTimeout(function () { ctrl.abort(); }, 30000); } catch (e) {}
+  fetch(location.href.split('#')[0], { cache: 'reload', signal: ctrl ? ctrl.signal : undefined })
+    .then(function (res) {
+      if (timer) clearTimeout(timer);
+      if (!res || !res.ok) throw new Error('http');
+      var jobs = [];
+      try {
+        if ('serviceWorker' in navigator) {
+          jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+            return Promise.all(regs.map(function (reg) {
+              try {
+                var s = (reg.active && reg.active.scriptURL) || (reg.waiting && reg.waiting.scriptURL) || (reg.installing && reg.installing.scriptURL) || '';
+                var own = new URL('sw.js', location.href);
+                var u = s ? new URL(s, location.href) : null;
+                if (u && u.origin === own.origin && u.pathname === own.pathname) return reg.unregister();
+              } catch (e) {}
+            }));
+          }));
+        }
+      } catch (e) {}
+      try {
+        if (window.caches && caches.keys) {
+          jobs.push(caches.keys().then(function (keys) {
+            return Promise.all(keys.filter(function (k) { return k.indexOf(__PS_CACHE_PREFIX) === 0; }).map(function (k) { return caches.delete(k); }));
+          }));
+        }
+      } catch (e) {}
+      return Promise.all(jobs.map(function (p) { return p.catch(function () {}); }));
+    })
+    .then(function () { location.reload(); }, function () { if (timer) clearTimeout(timer); fail(); });
+}
+
 function __psAddFloatingLogout() {
   // Fügt ein reines Icon (kein Text, kein Overlay) als echtes Kind-Element
   // in den bestehenden <header> von Pencil Selling ein – rechtsbündig, wie
   // die anderen Icons dort. Ein MutationObserver setzt es automatisch neu,
   // falls React den Header neu rendert und es dabei entfernen würde.
+  // Links daneben sitzt der Update-Button (Hard Reload).
+  function ensureUpdateBtn(header, logoutBtn) {
+    var u = document.getElementById('ps-update-icon');
+    if (u && header.contains(u)) return;
+    u = document.createElement('button');
+    u.id = 'ps-update-icon';
+    u.type = 'button';
+    u.title = 'Update laden';
+    u.setAttribute('aria-label', 'Update laden');
+    u.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>';
+    u.style.cssText = 'margin-left:auto;flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:#94a3b8;border-radius:8px;cursor:pointer;padding:0;';
+    u.onmouseenter = function () { u.style.background = '#eff6ff'; u.style.color = '#2563eb'; };
+    u.onmouseleave = function () { u.style.background = 'transparent'; u.style.color = '#94a3b8'; };
+    u.onclick = function () { __psHardReload(u); };
+    header.insertBefore(u, logoutBtn);
+  }
   function ensureBtn() {
     var header = document.querySelector('header');
     if (!header) return;
     var btn = document.getElementById('ps-logout-icon');
-    if (btn && header.contains(btn)) return;
-    btn = document.createElement('button');
-    btn.id = 'ps-logout-icon';
-    btn.type = 'button';
-    btn.title = 'Abmelden';
-    btn.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>';
-    btn.style.cssText = 'margin-left:auto;flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:#94a3b8;border-radius:8px;cursor:pointer;padding:0;';
-    btn.onmouseenter = function () { btn.style.background = '#fef2f2'; btn.style.color = '#dc2626'; };
-    btn.onmouseleave = function () { btn.style.background = 'transparent'; btn.style.color = '#94a3b8'; };
-    btn.onclick = function () {
-      if (!window.confirm('Wirklich abmelden?')) return;
-      __psGetAuth().signOut().then(function () { location.reload(); });
-    };
-    header.appendChild(btn);
+    if (!btn || !header.contains(btn)) {
+      btn = document.createElement('button');
+      btn.id = 'ps-logout-icon';
+      btn.type = 'button';
+      btn.title = 'Abmelden';
+      btn.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>';
+      btn.style.cssText = 'margin-left:2px;flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:#94a3b8;border-radius:8px;cursor:pointer;padding:0;';
+      btn.onmouseenter = function () { btn.style.background = '#fef2f2'; btn.style.color = '#dc2626'; };
+      btn.onmouseleave = function () { btn.style.background = 'transparent'; btn.style.color = '#94a3b8'; };
+      btn.onclick = function () {
+        if (!window.confirm('Wirklich abmelden?')) return;
+        __psGetAuth().signOut().then(function () { location.reload(); });
+      };
+      header.appendChild(btn);
+    }
+    ensureUpdateBtn(header, btn);
   }
 
   var tries = 0;
