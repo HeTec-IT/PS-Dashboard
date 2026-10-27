@@ -264,12 +264,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.21';
+        manifestLink.href = 'manifest.webmanifest?v=55.22';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.21').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.22').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -383,24 +383,68 @@
         var overlay = null;
         var messageEl = null;
         var continueBtn = null;
-        var exitBtn = null;
+        var pauseBtn = null;
+        var endBtn = null;
+        var refreshBtn = null;
         var endEl = null;
         var dialogVisible = false;
         var endRefreshTimer = null;
         var previousFocus = null;
+        var paused = false;
+        var pausedTs = 0;
         var accent = '#155eef';
+        var SNAP_PREFIX = 'ps_o2_autosave_v2_';
+        var DEFAULT_MSG = 'Du bist mitten in einer Kundenberatung. Möchtest du die App wirklich verlassen?';
+        var IDLE_TEXT = 'Beim Verlassen (Home-Geste) laufen 5 Minuten zur Wiederherstellung. „App pausieren“ startet die Frist sofort, „App beenden“ löscht alle Eingaben.';
 
-        // Noch keine Frist im Dialog: Diese beginnt erst beim tatsaechlichen Verlassen.
-        // Deshalb nur die laufend aktualisierte VORAUSSICHTLICHE Endzeit zeigen.
-        function restoreEndText() {
+        function windowMs() {
             var configured = Number(window.__PS_RESTORE_WINDOW_MS);
-            var ms = Number.isFinite(configured) && configured > 0 ? configured : 300000;
-            var end = new Date(Date.now() + ms);
-            var hh = ('0' + end.getHours()).slice(-2);
-            var mm = ('0' + end.getMinutes()).slice(-2);
-            var ss = ('0' + end.getSeconds()).slice(-2);
-            return 'Bei Verlassen jetzt: Wiederherstellung voraussichtlich bis ' +
-                   hh + ':' + mm + ':' + ss + ' Uhr. Die 5 Minuten starten erst beim tatsächlichen Verlassen.';
+            return Number.isFinite(configured) && configured > 0 ? configured : 300000;
+        }
+        function two(n) { return ('0' + n).slice(-2); }
+        // Gesicherte Beratung dieses Geräts: nur der eigene Autosave-Schlüssel dieser App
+        // (gespeicherte Angebote und das Archiv bleiben unberührt).
+        function snapKeys() {
+            var keys = [];
+            try {
+                for (var i = 0; i < localStorage.length; i++) {
+                    var k = localStorage.key(i);
+                    if (k && k.indexOf(SNAP_PREFIX) === 0) keys.push(k);
+                }
+            } catch (e) {}
+            return keys;
+        }
+        function snapTime() {
+            var t = 0;
+            snapKeys().forEach(function (k) {
+                try {
+                    var s = JSON.parse(localStorage.getItem(k) || '{}');
+                    if (s && Number(s.ts) > t) t = Number(s.ts);
+                } catch (e) {}
+            });
+            return t;
+        }
+        function wipeSnaps() {
+            try {
+                snapKeys().forEach(function (k) { localStorage.removeItem(k); });
+                localStorage.removeItem('ps_autosave_v1');
+            } catch (e) {}
+        }
+        function endText() {
+            if (!paused) return IDLE_TEXT;
+            if (!pausedTs) return 'Pausiert – es gibt noch keine Eingaben, die gesichert werden müssten.';
+            var endAt = pausedTs + windowMs();
+            var left = endAt - Date.now();
+            if (left <= 0) return 'Frist abgelaufen – die gesicherten Eingaben wurden gelöscht.';
+            var s = Math.ceil(left / 1000);
+            var end = new Date(endAt);
+            return 'Pausiert – Wiederherstellung noch ' + two(Math.floor(s / 60)) + ':' + two(s % 60) +
+                   ' min (bis ' + two(end.getHours()) + ':' + two(end.getMinutes()) + ':' + two(end.getSeconds()) + ' Uhr).';
+        }
+        function refreshEnd() {
+            // Abgelaufene Pausen-Sicherung sofort entfernen (Kundendaten sollen nicht liegen bleiben).
+            if (paused && pausedTs && Date.now() >= pausedTs + windowMs()) wipeSnaps();
+            if (endEl) endEl.textContent = endText();
         }
         function pushGuard() {
             try { history.pushState({ psBackGuard: 1 }, '', location.href); } catch (e) {}
@@ -408,31 +452,62 @@
         function hideDialog() {
             if (!overlay) return;
             dialogVisible = false;
+            // „Weiter beraten“ beendet die Pause: automatische Sicherung läuft wieder.
+            paused = false;
+            pausedTs = 0;
+            window.__PS_PAUSED = false;
             if (endRefreshTimer) { clearInterval(endRefreshTimer); endRefreshTimer = null; }
             overlay.style.display = 'none';
-            if (exitBtn) exitBtn.style.display = '';
+            if (pauseBtn) pauseBtn.style.display = '';
             try {
                 if (previousFocus && previousFocus.isConnected && previousFocus.focus) {
                     previousFocus.focus({ preventScroll: true });
                 }
             } catch (e) {}
         }
-        function tryExit() {
-            if (endEl) endEl.textContent = restoreEndText();
-            // window.close() funktioniert nur, wenn der Browser das Schliessen erlaubt.
-            // Andernfalls bewahren wir die Beratung und zeigen den sicheren Home-Weg.
+        // App pausieren: Sicherung JETZT schreiben (Zeitstempel = jetzt) und weitere Sicherungen
+        // sperren, damit die 5 Minuten exakt ab diesem Moment laufen.
+        function pauseApp() {
+            window.__PS_PAUSED = false;
+            try { document.dispatchEvent(new Event('ps-save-now')); } catch (e) {}
+            pausedTs = snapTime();
+            paused = true;
+            window.__PS_PAUSED = true;
+            if (messageEl) {
+                messageEl.textContent = 'Pausiert. Bitte nutze jetzt die Home-Geste, um die App zu verlassen. ' +
+                    'Die Beratung bleibt bis zum Ablauf der Frist wiederherstellbar.';
+            }
+            refreshEnd();
+            if (pauseBtn) pauseBtn.style.display = 'none';
+            if (continueBtn) continueBtn.focus();
+            // Schliessen klappt nur, wenn der Browser es erlaubt (Android meist nicht).
+            try { window.close(); } catch (e) {}
+        }
+        // App beenden: alle Eingaben dieser Beratung löschen, danach leer neu starten.
+        function endApp() {
+            if (!window.confirm('Beratung beenden? Alle Eingaben dieser Beratung werden gelöscht.')) return;
+            window.__PS_WIPING = true;
+            window.__PS_PAUSED = false;
+            wipeSnaps();
             try { window.close(); } catch (e) {}
             window.setTimeout(function () {
-                if (!dialogVisible || document.visibilityState === 'hidden') return;
-                if (messageEl) {
-                    messageEl.textContent =
-                        'Android erlaubt es dieser Browser-App nicht, sich selbst zu schließen. ' +
-                        'Bitte nutze die Home-Geste, um die App zu verlassen. Die 5-Minuten-Wiederherstellung bleibt aktiv.';
-                }
-                if (endEl) endEl.textContent = restoreEndText();
-                if (exitBtn) exitBtn.style.display = 'none';
-                if (continueBtn) continueBtn.focus();
+                // Android erlaubt kein Selbst-Schliessen: sauber mit leerer Beratung neu starten.
+                try { location.reload(); } catch (e) {}
             }, 400);
+        }
+        // App Refresh: Hard Reload (frische Version, eigener Cache/Service Worker geleert).
+        function refreshApp() {
+            if (typeof window.__psHardReload === 'function') window.__psHardReload(refreshBtn);
+            else { try { location.reload(); } catch (e) {} }
+        }
+        function makeBtn(label, color, border, handler) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = label;
+            b.style.cssText = 'flex:1 1 105px;min-height:48px;padding:0 6px;border:1px solid ' + border + ';' +
+                'border-radius:12px;background:#fff;color:' + color + ';font-size:14px;font-weight:650;cursor:pointer;';
+            b.addEventListener('click', handler);
+            return b;
         }
         function createDialog() {
             if (!document.body || overlay) return;
@@ -450,33 +525,32 @@
                 'border-radius:20px;padding:24px;color:#182234;box-shadow:0 20px 70px rgba(0,0,0,.28);';
             var heading = document.createElement('h2');
             heading.id = 'ps-back-confirm-title';
-            heading.textContent = 'Pencil o2 beenden?';
+            heading.textContent = 'Pencil o2 verlassen?';
             heading.style.cssText = 'margin:0 0 12px;font-size:21px;font-weight:750;line-height:1.3;';
             messageEl = document.createElement('p');
             messageEl.id = 'ps-back-confirm-text';
-            messageEl.textContent = 'Du bist mitten in einer Kundenberatung. Möchtest du die App wirklich verlassen?';
+            messageEl.textContent = DEFAULT_MSG;
             messageEl.style.cssText = 'font-size:15px;line-height:1.5;color:#475569;margin:0 0 12px;';
             endEl = document.createElement('p');
             endEl.id = 'ps-back-confirm-end';
             endEl.style.cssText = 'font-size:14px;line-height:1.5;color:#0f172a;font-weight:600;' +
-                'margin:0 0 22px;background:#f1f5f9;border-radius:10px;padding:10px 12px;';
-            endEl.textContent = restoreEndText();
+                'margin:0 0 18px;background:#f1f5f9;border-radius:10px;padding:10px 12px;';
+            endEl.textContent = IDLE_TEXT;
             var actions = document.createElement('div');
             actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;';
             continueBtn = document.createElement('button');
             continueBtn.type = 'button';
             continueBtn.textContent = 'Weiter beraten';
-            continueBtn.style.cssText = 'flex:1 1 155px;min-height:48px;border:0;border-radius:12px;' +
+            continueBtn.style.cssText = 'flex:1 1 100%;min-height:48px;border:0;border-radius:12px;' +
                 'background:' + accent + ';color:white;font-size:15px;font-weight:700;cursor:pointer;';
             continueBtn.addEventListener('click', hideDialog);
-            exitBtn = document.createElement('button');
-            exitBtn.type = 'button';
-            exitBtn.textContent = 'App beenden';
-            exitBtn.style.cssText = 'flex:1 1 125px;min-height:48px;border:1px solid #cbd5e1;' +
-                'border-radius:12px;background:#fff;color:#334155;font-size:15px;font-weight:650;cursor:pointer;';
-            exitBtn.addEventListener('click', tryExit);
+            pauseBtn = makeBtn('App pausieren', '#334155', '#cbd5e1', pauseApp);
+            endBtn = makeBtn('App beenden', '#b42318', '#fda29b', endApp);
+            refreshBtn = makeBtn('App Refresh', '#334155', '#cbd5e1', refreshApp);
             actions.appendChild(continueBtn);
-            actions.appendChild(exitBtn);
+            actions.appendChild(pauseBtn);
+            actions.appendChild(endBtn);
+            actions.appendChild(refreshBtn);
             panel.appendChild(heading);
             panel.appendChild(messageEl);
             panel.appendChild(endEl);
@@ -493,17 +567,16 @@
             createDialog();
             if (!overlay || dialogVisible) return;
             previousFocus = document.activeElement;
-            messageEl.textContent =
-                'Du bist mitten in einer Kundenberatung. Möchtest du die App wirklich verlassen?';
-            if (endEl) endEl.textContent = restoreEndText();
-            exitBtn.style.display = '';
+            paused = false;
+            pausedTs = 0;
+            messageEl.textContent = DEFAULT_MSG;
+            refreshEnd();
+            if (pauseBtn) pauseBtn.style.display = '';
             dialogVisible = true;
             overlay.style.display = 'flex';
             if (endRefreshTimer) clearInterval(endRefreshTimer);
             endRefreshTimer = setInterval(function () {
-                if (dialogVisible && endEl && document.visibilityState !== 'hidden') {
-                    endEl.textContent = restoreEndText();
-                }
+                if (dialogVisible && document.visibilityState !== 'hidden') refreshEnd();
             }, 1000);
             try { continueBtn.focus({ preventScroll: true }); } catch (e) {}
         }
@@ -574,7 +647,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.21';
+    window.APP_VERSION = '55.22';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -27080,6 +27153,8 @@ function App() {
     return AUTOSAVE_PREFIX + (uid || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
   }, []);
   const saveToAutosave = React.useCallback(() => {
+    // Beenden/Pausieren (Verlassen-Dialog): wipe = nichts mehr schreiben, pause = Stand einfrieren.
+    if (window.__PS_WIPING || window.__PS_PAUSED) return;
     const uid = String(window.__PS_USER_UID || '').trim();
     if (!uid) return;
     const snap = {
@@ -27177,9 +27252,11 @@ function App() {
     const onVisibility = () => { if (document.visibilityState === 'hidden') saveNow(); };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', saveNow);
+    document.addEventListener('ps-save-now', saveNow);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', saveNow);
+      document.removeEventListener('ps-save-now', saveNow);
     };
   }, [saveToAutosave]);
 
@@ -35738,7 +35815,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.21"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.22"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
