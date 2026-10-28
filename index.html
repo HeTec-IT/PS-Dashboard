@@ -292,12 +292,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.33';
+        manifestLink.href = 'manifest.webmanifest?v=55.34';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.33').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.34').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -720,6 +720,7 @@
         function endApp() {
             // Der Zurueck-Dialog ist die Bestaetigung: sofort beenden, ohne weiteres Popup.
             if (window.__PS_WIPING) return;
+            rememberFullscreen();
             // 1) Sofort loeschen; Autosave/Wiederherstellung sind danach gesperrt (__PS_WIPING).
             window.__psClearActiveSession();
             window.__psIntentionalReload = true;
@@ -937,6 +938,48 @@
         ['pointerup', 'touchend', 'click', 'keydown'].forEach(function (ev) {
             document.addEventListener(ev, arm, true);
         });
+        // Vollmodus nach "App beenden": Der Browser erlaubt Vollbild nur nach einer Beruehrung.
+        // Deshalb merkt sich "App beenden" den Vollmodus; beim ersten Tippen nach dem Neustart geht die App wieder hinein.
+        var FS_KEY = SNAP_PREFIX.replace('autosave_v2_', 'fs_resume_v1');
+        var FS_MAX_AGE = 12 * 60 * 60 * 1000;
+        function inFullscreen() {
+            return !!(document.fullscreenElement || document.webkitFullscreenElement);
+        }
+        function fullscreenWindowMode() {
+            try { return window.matchMedia('(display-mode: fullscreen)').matches; } catch (_) { return false; }
+        }
+        function rememberFullscreen() {
+            try {
+                if (isIOS()) return;
+                if (inFullscreen() || fullscreenWindowMode()) localStorage.setItem(FS_KEY, String(Date.now()));
+                else localStorage.removeItem(FS_KEY);
+            } catch (_) {}
+        }
+        (function resumeFullscreen() {
+            var ts = 0;
+            try { ts = Number(localStorage.getItem(FS_KEY) || 0); } catch (_) {}
+            if (!ts) return;
+            var EVS = ['pointerup', 'touchend', 'click'];
+            function done() {
+                EVS.forEach(function (ev) { try { document.removeEventListener(ev, onTap, true); } catch (_) {} });
+                try { localStorage.removeItem(FS_KEY); } catch (_) {}
+            }
+            if (isIOS() || Date.now() - ts > FS_MAX_AGE) { done(); return; }
+            var tries = 0;
+            function onTap() {
+                // Schon im Vollmodus (z. B. Start ueber das Icon) -> nichts zu tun.
+                if (inFullscreen() || fullscreenWindowMode()) { done(); return; }
+                var el = document.documentElement, p = null;
+                try {
+                    if (el.requestFullscreen) p = el.requestFullscreen();
+                    else if (el.webkitRequestFullscreen) p = el.webkitRequestFullscreen();
+                } catch (_) {}
+                tries++;
+                if (p && typeof p.then === 'function') p.then(done, function () { if (tries >= 3) done(); });
+                else done();
+            }
+            EVS.forEach(function (ev) { document.addEventListener(ev, onTap, true); });
+        })();
     })();
     </script>
     <!-- ===== iOS Splashscreen (Startup Images) – iPad 10.2" / Air 10.9" / Pro 11" ===== -->
@@ -979,7 +1022,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.33';
+    window.APP_VERSION = '55.34';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -36169,7 +36212,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.33"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.34"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
