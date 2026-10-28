@@ -264,12 +264,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.25';
+        manifestLink.href = 'manifest.webmanifest?v=55.26';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.25').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.26').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -481,6 +481,11 @@
         } catch (e) { return; }
 
         var armed = false;
+        // Chrome auf Android: native Zurueck-Gesten ohne synthetischen History-Eintrag.
+        // Dies erlaubt dem Browser, die PWA beim echten System-Zurueck zu verlassen.
+        // Andere Browser nutzen weiterhin den bisherigen History-Guard.
+        var nativeBackMode = typeof window.CloseWatcher === 'function' && /Android/i.test(navigator.userAgent || '');
+        var nativeBackWatcher = null;
         var overlay = null;
         var messageEl = null;
         var continueBtn = null;
@@ -556,6 +561,27 @@
         }
         function pushGuard() {
             try { history.pushState({ psBackGuard: 1 }, '', location.href); } catch (e) {}
+        }
+        function armNativeBack() {
+            if (!nativeBackMode || window.__PS_WIPING) return false;
+            if (nativeBackWatcher) return true;
+            try {
+                var watcher = new window.CloseWatcher();
+                nativeBackWatcher = watcher;
+                watcher.addEventListener('close', function () {
+                    if (nativeBackWatcher === watcher) nativeBackWatcher = null;
+                    if (window.__PS_WIPING) return;
+                    if (dialogVisible) hideDialog();
+                    else showDialog();
+                    // Neuer Watcher nach verarbeitetem System-Zurueck, keine History-Manipulation.
+                    window.setTimeout(armNativeBack, 0);
+                });
+                return true;
+            } catch (_) {
+                nativeBackMode = false;
+                nativeBackWatcher = null;
+                return false;
+            }
         }
         function hideDialog() {
             if (!overlay) return;
@@ -647,7 +673,16 @@
             }
             // iOS: Schliessen und Verlassen per Skript sind technisch nicht moeglich -> nichts vortaeuschen.
             if (isIOS()) { resetApp(); return; }
-            // 3) Nur ein History-Eintrag: der Browser erlaubt window.close() direkt.
+            // Android: erst den CloseWatcher deaktivieren. Kein kuenstlicher Verlauf mehr.
+            // window.close ist weiterhin Browser-abhaengig und wird NICHT garantiert.
+            if (nativeBackMode) {
+                try { if (nativeBackWatcher) nativeBackWatcher.destroy(); } catch (_) {}
+                nativeBackWatcher = null;
+                try { window.close(); } catch (_) {}
+                window.setTimeout(resetApp, 250);
+                return;
+            }
+            // 3) Legacy-Verlauf-Fallback fuer nicht unterstuetzte Browser.
             try { if (history.length <= 1) window.close(); } catch (_) {}
             // 4) Sonst zurueck bis zum ersten Eintrag (nur durch unsere eigenen Guard-Eintraege).
             var steps = 0;
@@ -780,6 +815,8 @@
             ['pointerup', 'touchend', 'click', 'keydown'].forEach(function (ev) {
                 document.removeEventListener(ev, arm, true);
             });
+            // Chrome/Android braucht keinen kuenstlichen History-Eintrag.
+            if (armNativeBack()) return;
             pushGuard();
             window.addEventListener('popstate', onBack);
         }
@@ -836,7 +873,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.25';
+    window.APP_VERSION = '55.26';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -36013,7 +36050,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.25"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.26"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
