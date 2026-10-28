@@ -264,12 +264,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.24';
+        manifestLink.href = 'manifest.webmanifest?v=55.25';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.24').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.25').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -609,36 +609,78 @@
             // Schliessen klappt nur, wenn der Browser es erlaubt (Android meist nicht).
             try { window.close(); } catch (e) {}
         }
-        // App beenden: alle Eingaben dieser Beratung löschen und die App schliessen.
-        // Wo der Browser das Schliessen verbietet (Android/iPad-PWA), startet stattdessen sofort eine leere Beratung.
+        // App beenden: alle Eingaben dieser Beratung sofort loeschen und die installierte PWA verlassen.
+        // Ein Webskript darf ein Fenster nur per window.close() schliessen, wenn die Session-History
+        // genau EINEN Eintrag hat (im Betrieb sind es durch den Zurueck-Schutz meist zwei; ein History-
+        // Sprung ueber den ersten Eintrag hinaus wird vom Browser ignoriert). Deshalb gehen wir ueber die
+        // History zurueck bis zum ersten Eintrag der PWA (dort verlaesst die System-Zurueck-Taste die App
+        // ohne Dialog) und versuchen window.close(). Verlaesst der Browser die App nicht, startet sofort
+        // eine garantiert leere Beratung. iOS erlaubt beides nicht: dort nur Loeschen + leerer Neustart.
+        function isIOS() {
+            var ua = navigator.userAgent || '';
+            return /iPhone|iPad|iPod/.test(ua) ||
+                   (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+        }
         function endApp() {
             // Der Zurueck-Dialog ist die Bestaetigung: sofort beenden, ohne weiteres Popup.
             if (window.__PS_WIPING) return;
-            // Erst die aktuelle Beratung und den Pause-Snapshot entfernen.
+            // 1) Sofort loeschen; Autosave/Wiederherstellung sind danach gesperrt (__PS_WIPING).
             window.__psClearActiveSession();
             window.__psIntentionalReload = true;
+            // 2) Eigenen Zurueck-Schutz abschalten (kein erneuter Dialog, kein neuer Guard-Eintrag).
+            try { window.removeEventListener('popstate', onBack); } catch (_) {}
+            armed = true;
+            ['pointerup', 'touchend', 'click', 'keydown'].forEach(function (ev) {
+                try { document.removeEventListener(ev, arm, true); } catch (_) {}
+            });
             dialogVisible = false;
             if (endRefreshTimer) { clearInterval(endRefreshTimer); endRefreshTimer = null; }
             if (overlay) overlay.style.display = 'none';
-            try { window.removeEventListener('popstate', onBack); } catch (_) {}
-            // Keine alten Kundendaten sichtbar lassen, falls das Betriebssystem
-            // den programmgesteuerten Exit einer Standalone-PWA nicht erlaubt.
+            // Keine alten Kundendaten sichtbar lassen, solange der Ausstieg laeuft.
             try { if (document.body) document.body.style.visibility = 'hidden'; } catch (_) {}
-            var leftPage = false;
-            var onExitPageHide = function () { leftPage = true; };
-            try { window.addEventListener('pagehide', onExitPageHide, { once: true }); } catch (_) {}
-            try { window.close(); } catch (_) {}
-            // Die installierte PWA hat durch unseren Back-Guard zwei Eintraege:
-            // Guard -> Ausgangsseite -> gegebenenfalls vorherige Browser-Seite.
-            // Ein einziger Schritt um -2 versucht den PWA-Container zu verlassen.
-            // Keine weiteren History-Back-Aufrufe, die ungewollt zu fremden Seiten fuehren.
-            try { history.go(-2); } catch (_) {}
-            // Nur wenn das Verlassen verhindert wurde: sauber und leer starten.
-            // Ein echtes Beenden des Android-/iOS-App-Prozesses ist im Web nicht erzwingbar.
-            window.setTimeout(function () {
-                try { window.removeEventListener('pagehide', onExitPageHide); } catch (_) {}
-                if (!leftPage) { try { location.reload(); } catch (_) {} }
-            }, 1200);
+            var finished = false;
+            function resetApp() {
+                // Sicherer Fallback: garantiert leere Beratung (Login, Archiv, Parkdaten bleiben).
+                if (finished) return;
+                finished = true;
+                try { location.reload(); } catch (_) {}
+            }
+            // iOS: Schliessen und Verlassen per Skript sind technisch nicht moeglich -> nichts vortaeuschen.
+            if (isIOS()) { resetApp(); return; }
+            // 3) Nur ein History-Eintrag: der Browser erlaubt window.close() direkt.
+            try { if (history.length <= 1) window.close(); } catch (_) {}
+            // 4) Sonst zurueck bis zum ersten Eintrag (nur durch unsere eigenen Guard-Eintraege).
+            var steps = 0;
+            function leave() {
+                try { window.close(); } catch (_) {}
+                window.setTimeout(resetApp, 150);
+            }
+            function stepBack() {
+                var st = null;
+                try { st = history.state; } catch (_) {}
+                if (!(st && st.psBackGuard) || steps >= 6) { leave(); return; }
+                steps++;
+                var settled = false;
+                var timer = 0;
+                function onPop() {
+                    if (settled) return;
+                    settled = true;
+                    window.clearTimeout(timer);
+                    window.removeEventListener('popstate', onPop);
+                    window.setTimeout(stepBack, 0);
+                }
+                window.addEventListener('popstate', onPop);
+                timer = window.setTimeout(function () {
+                    if (settled) return;
+                    settled = true;
+                    window.removeEventListener('popstate', onPop);
+                    leave();
+                }, 400);
+                try { history.back(); } catch (_) { onPop(); }
+            }
+            stepBack();
+            // Notfall: spaetestens nach 1,5 s ist die Beratung sichtbar zurueckgesetzt.
+            window.setTimeout(resetApp, 1500);
         }
         // Refresh startet eine leere Beratung, ohne Login/Archiv zu veraendern.
         function refreshApp() {
@@ -794,7 +836,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.24';
+    window.APP_VERSION = '55.25';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -35971,7 +36013,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.24"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.25"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
