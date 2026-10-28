@@ -264,12 +264,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.23';
+        manifestLink.href = 'manifest.webmanifest?v=55.24';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.23').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.24').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -496,7 +496,6 @@
         var accent = '#155eef';
         var SNAP_PREFIX = 'ps_o2_autosave_v2_';
         var PAUSE_KEY = 'ps_o2_manual_pause_v1';
-        var APP_NAME = 'Pencil o2';
         var DEFAULT_MSG = 'Du bist mitten in einer Kundenberatung. Möchtest du die App wirklich verlassen?';
         var IDLE_TEXT = 'Home-Geste, App-Wechsel und „App pausieren“ starten die 5-Minuten-Frist. „App beenden“ und „App Refresh“ löschen die laufende Beratung sofort.';
 
@@ -610,41 +609,8 @@
             // Schliessen klappt nur, wenn der Browser es erlaubt (Android meist nicht).
             try { window.close(); } catch (e) {}
         }
-        // Beendeter Zustand: vollflächige Abdeckung, damit nichts mehr bedienbar/sichtbar ist.
-        // (Webseiten dürfen sich in Android-/iPad-Apps nicht selbst schliessen.)
-        function showEndedScreen() {
-            if (document.getElementById('ps-ended-cover') || !document.body) return;
-            if (endRefreshTimer) { clearInterval(endRefreshTimer); endRefreshTimer = null; }
-            dialogVisible = false;
-            if (overlay) overlay.style.display = 'none';
-            var cover = document.createElement('div');
-            cover.id = 'ps-ended-cover';
-            cover.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;' +
-                'align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;box-sizing:border-box;' +
-                'background:#0f172a;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;';
-            var t = document.createElement('div');
-            t.textContent = APP_NAME + ' beendet';
-            t.style.cssText = 'font-size:24px;font-weight:750;';
-            var m = document.createElement('div');
-            m.textContent = 'Alle Eingaben dieser Beratung wurden gelöscht. ' +
-                'Du kannst die App jetzt schließen (Home-Geste, App wegwischen).';
-            m.style.cssText = 'font-size:15px;line-height:1.5;color:#cbd5e1;max-width:380px;';
-            var go = document.createElement('button');
-            go.type = 'button';
-            go.textContent = 'Neue Beratung starten';
-            go.style.cssText = 'margin-top:10px;min-height:48px;padding:0 24px;border:0;border-radius:12px;' +
-                'background:' + accent + ';color:#fff;font-size:15px;font-weight:700;cursor:pointer;';
-            go.addEventListener('click', function () {
-                window.__psIntentionalReload = true;
-                try { location.reload(); } catch (e) {}
-            });
-            cover.appendChild(t);
-            cover.appendChild(m);
-            cover.appendChild(go);
-            document.body.appendChild(cover);
-        }
         // App beenden: alle Eingaben dieser Beratung löschen und die App schliessen.
-        // Wo der Browser das Schliessen verbietet (Android/iPad-PWA), bleibt die Abdeckung "beendet".
+        // Wo der Browser das Schliessen verbietet (Android/iPad-PWA), startet stattdessen sofort eine leere Beratung.
         function endApp() {
             // Keine zweite Rueckfrage und kein "App beendet"-Bildschirm.
             window.__psClearActiveSession();
@@ -809,7 +775,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.23';
+    window.APP_VERSION = '55.24';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -27363,6 +27329,7 @@ function App() {
       localStorage.removeItem(AUTOSAVE_LEGACY_KEY);
       localStorage.removeItem('ps_o2_manual_pause_v1');
     } catch (e) {}
+    window.__PS_PAUSED = false;
   };
 
   // Kein periodischer Autosave. Nur bewusste Pausen sind wiederherstellbar.
@@ -27421,6 +27388,11 @@ function App() {
   }, [saveToAutosave]);
 
   const handleRestoreAutosave = (silent) => {
+    if (window.__PS_WIPING) {
+      // Nach "App beenden"/"App Refresh" nie mehr etwas wiederherstellen (verzoegerte Callbacks).
+      try { if (window.__psRestoreCoverDone) window.__psRestoreCoverDone(); } catch (_) {}
+      return;
+    }
     try {
       const snap = JSON.parse(localStorage.getItem(getAutosaveKey()) || '{}');
       if (!window.__psIsManualPause(snap)) { clearAutosave(); throw new Error('Keine bewusste Pause'); }
@@ -27496,6 +27468,8 @@ function App() {
       if (silent !== true) triggerToast(snap.reduced ? '✅ Sitzung wiederhergestellt (Bilder waren nicht im Autosave).' : '✅ Sitzung wiederhergestellt!');
     } catch (e) {
       try { if (window.__psRestoreCoverDone) window.__psRestoreCoverDone(); } catch (_) {}
+      // Fehlgeschlagene Wiederherstellung darf keine Pause "haengen lassen".
+      try { clearAutosave(); } catch (_) {}
       triggerToast('Wiederherstellung fehlgeschlagen.');
     }
   };
@@ -35978,7 +35952,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.23"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.24"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -43356,7 +43330,7 @@ function __psHardReload(btn) {
       } catch (e) {}
       return Promise.all(jobs.map(function (p) { return p.catch(function () {}); }));
     })
-    .then(function () { window.__psIntentionalReload = true; location.reload(); }, function () { if (timer) clearTimeout(timer); fail(); });
+    .then(function () { try { if (window.__psStartBackgroundPause) window.__psStartBackgroundPause(); } catch (e) {} window.__psIntentionalReload = true; location.reload(); }, function () { if (timer) clearTimeout(timer); fail(); });
 }
 
 function __psAddFloatingLogout() {
