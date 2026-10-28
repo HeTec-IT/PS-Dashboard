@@ -612,39 +612,33 @@
         // App beenden: alle Eingaben dieser Beratung löschen und die App schliessen.
         // Wo der Browser das Schliessen verbietet (Android/iPad-PWA), startet stattdessen sofort eine leere Beratung.
         function endApp() {
-            // Nach dem Klick direkt loeschen. Keine weitere Nachfrage und keine Endansicht.
-            // Die PWA kann als Webseite keinen OS-Prozess beenden; Browser-History ist
-            // der beste Versuch, den Standalone-Container per Zurueck zu verlassen.
+            // Der Zurueck-Dialog ist die Bestaetigung: sofort beenden, ohne weiteres Popup.
             if (window.__PS_WIPING) return;
+            // Erst die aktuelle Beratung und den Pause-Snapshot entfernen.
             window.__psClearActiveSession();
             window.__psIntentionalReload = true;
             dialogVisible = false;
             if (endRefreshTimer) { clearInterval(endRefreshTimer); endRefreshTimer = null; }
             if (overlay) overlay.style.display = 'none';
-            // Verhindert alte Kundendaten waehrend einer blockierten Navigation.
-            try { if (document.body) document.body.style.visibility = 'hidden'; } catch (_) {}
-            // Wichtig: Der kuenstliche History-Guard darf den Exit nicht abfangen.
             try { window.removeEventListener('popstate', onBack); } catch (_) {}
-            try {
-                if (history && typeof history.go === 'function') history.go(-2);
-            } catch (_) {}
-            // Wenn -2 keine vorherige History-Position hat, Einzel-Back versuchen.
-            // Die Timer laufen nur, falls die App tatsaechlich noch offen ist.
+            // Keine alten Kundendaten sichtbar lassen, falls das Betriebssystem
+            // den programmgesteuerten Exit einer Standalone-PWA nicht erlaubt.
+            try { if (document.body) document.body.style.visibility = 'hidden'; } catch (_) {}
+            var leftPage = false;
+            var onExitPageHide = function () { leftPage = true; };
+            try { window.addEventListener('pagehide', onExitPageHide, { once: true }); } catch (_) {}
+            try { window.close(); } catch (_) {}
+            // Die installierte PWA hat durch unseren Back-Guard zwei Eintraege:
+            // Guard -> Ausgangsseite -> gegebenenfalls vorherige Browser-Seite.
+            // Ein einziger Schritt um -2 versucht den PWA-Container zu verlassen.
+            // Keine weiteren History-Back-Aufrufe, die ungewollt zu fremden Seiten fuehren.
+            try { history.go(-2); } catch (_) {}
+            // Nur wenn das Verlassen verhindert wurde: sauber und leer starten.
+            // Ein echtes Beenden des Android-/iOS-App-Prozesses ist im Web nicht erzwingbar.
             window.setTimeout(function () {
-                if (document.visibilityState === 'visible') {
-                    try { history.back(); } catch (_) {}
-                }
-            }, 350);
-            window.setTimeout(function () {
-                if (document.visibilityState === 'visible') {
-                    try { history.back(); } catch (_) {}
-                }
-            }, 850);
-            // OS-Sperre: Keine falsche Erfolgsmeldung, stattdessen leere Beratung.
-            window.setTimeout(function () {
-                try { window.close(); } catch (_) {}
-                try { location.reload(); } catch (_) {}
-            }, 1500);
+                try { window.removeEventListener('pagehide', onExitPageHide); } catch (_) {}
+                if (!leftPage) { try { location.reload(); } catch (_) {} }
+            }, 1200);
         }
         // Refresh startet eine leere Beratung, ohne Login/Archiv zu veraendern.
         function refreshApp() {
