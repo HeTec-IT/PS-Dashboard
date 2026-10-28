@@ -612,14 +612,39 @@
         // App beenden: alle Eingaben dieser Beratung löschen und die App schliessen.
         // Wo der Browser das Schliessen verbietet (Android/iPad-PWA), startet stattdessen sofort eine leere Beratung.
         function endApp() {
-            // Keine zweite Rueckfrage und kein "App beendet"-Bildschirm.
+            // Nach dem Klick direkt loeschen. Keine weitere Nachfrage und keine Endansicht.
+            // Die PWA kann als Webseite keinen OS-Prozess beenden; Browser-History ist
+            // der beste Versuch, den Standalone-Container per Zurueck zu verlassen.
+            if (window.__PS_WIPING) return;
             window.__psClearActiveSession();
             window.__psIntentionalReload = true;
+            dialogVisible = false;
+            if (endRefreshTimer) { clearInterval(endRefreshTimer); endRefreshTimer = null; }
+            if (overlay) overlay.style.display = 'none';
+            // Verhindert alte Kundendaten waehrend einer blockierten Navigation.
+            try { if (document.body) document.body.style.visibility = 'hidden'; } catch (_) {}
+            // Wichtig: Der kuenstliche History-Guard darf den Exit nicht abfangen.
             try { window.removeEventListener('popstate', onBack); } catch (_) {}
-            try { window.close(); } catch (_) {}
-            // Mobile Browser koennen die installierte PWA nicht selbst schliessen:
-            // Dann sichtbar zurueck in eine garantiert leere Beratung.
-            window.setTimeout(function () { location.reload(); }, 80);
+            try {
+                if (history && typeof history.go === 'function') history.go(-2);
+            } catch (_) {}
+            // Wenn -2 keine vorherige History-Position hat, Einzel-Back versuchen.
+            // Die Timer laufen nur, falls die App tatsaechlich noch offen ist.
+            window.setTimeout(function () {
+                if (document.visibilityState === 'visible') {
+                    try { history.back(); } catch (_) {}
+                }
+            }, 350);
+            window.setTimeout(function () {
+                if (document.visibilityState === 'visible') {
+                    try { history.back(); } catch (_) {}
+                }
+            }, 850);
+            // OS-Sperre: Keine falsche Erfolgsmeldung, stattdessen leere Beratung.
+            window.setTimeout(function () {
+                try { window.close(); } catch (_) {}
+                try { location.reload(); } catch (_) {}
+            }, 1500);
         }
         // Refresh startet eine leere Beratung, ohne Login/Archiv zu veraendern.
         function refreshApp() {
