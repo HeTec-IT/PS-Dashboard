@@ -52,7 +52,19 @@
         // Surface 11" → ~900x1440px → scale 1.2
         function applyScale() {
             var w = window.screen.width;
+            // Nach App-Start/Rueckkehr melden manche Android-Geraete kurz die Ausrichtung falsch:
+            // Ausrichtung aus dem Fenster ableiten (Apple-Geraete bleiben unveraendert).
+            var hFix = null;
+            try {
+                if (!/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent || '') && window.matchMedia) {
+                    var sw0 = window.screen.width, sh0 = window.screen.height;
+                    var land = window.matchMedia('(orientation: landscape)').matches;
+                    w = land ? Math.max(sw0, sh0) : Math.min(sw0, sh0);
+                    hFix = land ? Math.min(sw0, sh0) : Math.max(sw0, sh0);
+                }
+            } catch (e) {}
             var h = window.screen.height;
+            if (hFix !== null) h = hFix;
             var dpr = window.devicePixelRatio || 1;
             var isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
@@ -88,13 +100,14 @@
             var currentWidth = w;
             var targetWidth = Math.round(currentWidth / scale);
             var vp = document.querySelector('meta[name="viewport"]');
-            if (vp) {
-                vp.setAttribute('content',
-                    'width=' + targetWidth +
-                    ', initial-scale=' + scale.toFixed(2) +
-                    ', maximum-scale=3.0, user-scalable=yes'
-                );
+            var nextContent = 'width=' + targetWidth +
+                ', initial-scale=' + scale.toFixed(2) +
+                ', maximum-scale=3.0, user-scalable=yes';
+            if (vp && vp.getAttribute('content') !== nextContent) {
+                vp.setAttribute('content', nextContent);
+                return true;
             }
+            return false;
         }
         applyScale();
         // Neu berechnen wenn Orientierung wechselt.
@@ -110,6 +123,21 @@
                 setTimeout(function(){ applyScale(); fireCanvasRecalc(); }, ms);
             });
         });
+        // Nach App-Start/Rueckkehr ist das Fenster kurz noch nicht final (Startanimation): erneut pruefen.
+        // applyScale ist idempotent und meldet nur echte Aenderungen (dann Zeichenflaechen neu berechnen).
+        var recalcTimers = [];
+        function recalcSoon() {
+            recalcTimers.forEach(clearTimeout); recalcTimers = [];
+            [150, 500, 1200].forEach(function (ms) {
+                recalcTimers.push(setTimeout(function () { if (applyScale()) fireCanvasRecalc(); }, ms));
+            });
+        }
+        window.addEventListener('pageshow', recalcSoon);
+        window.addEventListener('resize', recalcSoon);
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') recalcSoon();
+        });
+        recalcSoon();
     })();
     </script>
 
@@ -264,12 +292,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.32';
+        manifestLink.href = 'manifest.webmanifest?v=55.33';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.32').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.33').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -722,9 +750,26 @@
             // Hintergrund), NICHT neu laden; erst bei Rueckkehr in den Vordergrund leer neu starten.
             var leaving = false;
             window.addEventListener('pagehide', function () { leaving = true; });
+            // Rueckkehr nach dem Schliessen: das Fenster hat kurz eine falsche Groesse (Startanimation).
+            // Erst neu laden, wenn sich die Fenstergroesse ~600 ms nicht mehr aendert (max. 2 s),
+            // sonst wird die Oberflaeche in falscher Groesse aufgebaut (verzogen).
+            var settling = false;
+            function settleThenReset() {
+                if (settling) return;
+                settling = true;
+                var t0 = Date.now(), last = t0, w0 = window.innerWidth, h0 = window.innerHeight;
+                (function poll() {
+                    if (document.visibilityState === 'hidden') { settling = false; return; }
+                    if (window.innerWidth !== w0 || window.innerHeight !== h0) {
+                        w0 = window.innerWidth; h0 = window.innerHeight; last = Date.now();
+                    }
+                    if (Date.now() - last >= 600 || Date.now() - t0 >= 2000) { resetApp(); return; }
+                    window.setTimeout(poll, 100);
+                })();
+            }
             document.addEventListener('visibilitychange', function () {
                 if (document.visibilityState === 'hidden') leaving = true;
-                else if (leaving) resetApp();
+                else if (leaving) settleThenReset();
             });
             // Blink erlaubt window.close() nur bei genau einem History-Eintrag (sonst sofort Fallback).
             var canClose = false;
@@ -934,7 +979,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.32';
+    window.APP_VERSION = '55.33';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -36124,7 +36169,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.32"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.33"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
