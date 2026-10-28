@@ -264,12 +264,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.29';
+        manifestLink.href = 'manifest.webmanifest?v=55.30';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.29').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.30').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -708,22 +708,35 @@
             }
             // iOS: Schliessen und Verlassen per Skript sind technisch nicht moeglich -> nichts vortaeuschen.
             if (isIOS()) { resetApp(); return; }
-            // Android: erst den CloseWatcher deaktivieren. Kein kuenstlicher Verlauf mehr.
-            // window.close ist weiterhin Browser-abhaengig und wird NICHT garantiert.
+            // Ab hier wird versucht, die App wirklich zu verlassen. Ein Reload direkt nach window.close()
+            // kann das Schliessen abbrechen. Deshalb: sobald die Seite verlassen wird (pagehide oder
+            // Hintergrund), NICHT neu laden; erst bei Rueckkehr in den Vordergrund leer neu starten.
+            var leaving = false;
+            window.addEventListener('pagehide', function () { leaving = true; });
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState === 'hidden') leaving = true;
+                else if (leaving) resetApp();
+            });
+            // Blink erlaubt window.close() nur bei genau einem History-Eintrag (sonst sofort Fallback).
+            var canClose = false;
+            try { canClose = history.length <= 1; } catch (_) {}
+            function fallbackSoon(ms) {
+                window.setTimeout(function () { if (!leaving) resetApp(); }, ms);
+            }
+            // Android (CloseWatcher): kein kuenstlicher Verlauf, der CloseWatcher ist bereits abgebaut.
+            // window.close ist browserabhaengig und wird NICHT garantiert.
             if (nativeBackMode) {
-                try { if (nativeBackWatcher) nativeBackWatcher.destroy(); } catch (_) {}
-                nativeBackWatcher = null;
                 try { window.close(); } catch (_) {}
-                window.setTimeout(resetApp, 250);
+                fallbackSoon(canClose ? 3000 : 400);
                 return;
             }
             // 3) Legacy-Verlauf-Fallback fuer nicht unterstuetzte Browser.
-            try { if (history.length <= 1) window.close(); } catch (_) {}
+            try { if (canClose) window.close(); } catch (_) {}
             // 4) Sonst zurueck bis zum ersten Eintrag (nur durch unsere eigenen Guard-Eintraege).
             var steps = 0;
             function leave() {
                 try { window.close(); } catch (_) {}
-                window.setTimeout(resetApp, 150);
+                fallbackSoon(canClose ? 3000 : 150);
             }
             function stepBack() {
                 var st = null;
@@ -749,8 +762,8 @@
                 try { history.back(); } catch (_) { onPop(); }
             }
             stepBack();
-            // Notfall: spaetestens nach 1,5 s ist die Beratung sichtbar zurueckgesetzt.
-            window.setTimeout(resetApp, 1500);
+            // Notfall: spaetestens dann ist die Beratung sichtbar zurueckgesetzt.
+            fallbackSoon(canClose ? 3500 : 1500);
         }
         // Refresh startet eine leere Beratung, ohne Login/Archiv zu veraendern.
         function refreshApp() {
@@ -912,7 +925,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.29';
+    window.APP_VERSION = '55.30';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -36102,7 +36115,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.29"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.30"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
