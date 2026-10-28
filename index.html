@@ -292,12 +292,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.34';
+        manifestLink.href = 'manifest.webmanifest?v=55.35';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.34').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.35').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -1022,7 +1022,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.34';
+    window.APP_VERSION = '55.35';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -14766,23 +14766,23 @@ const RoamingModal = ({
     de_eu: {
       label: 'Anruf ins EU-Ausland',
       flag: '📲',
-      badge: '0,29 €/Min',
+      badge: '0,23 €/Min',
       badgeColor: '#ef4444',
       subtitle: 'Von Deutschland ins Ausland anrufen',
       headerBg: 'linear-gradient(135deg,#7c2d12,#dc2626,#b91c1c)',
       status: 'warn',
       statusText: 'Kostenpflichtig',
-      statusSub: 'Anrufe aus DE ins EU-Ausland sind nicht inklusive',
+      statusSub: 'Anrufe aus DE ins EU-Ausland sind Auslandsverbindungen — nicht inklusive, auch nicht mit Allnet-Flat',
       countries: ['🇪🇸 Spanien', '🇮🇹 Italien', '🇫🇷 Frankreich', '🇬🇷 Griechenland', '🇵🇹 Portugal', '🇦🇹 Österreich'],
       items: [{
         icon: '📞',
         label: 'Anruf DE → EU',
-        detail: 'ca. 0,29 €/Min',
+        detail: 'ca. 0,23 €/Min (EU-Preisgrenze, brutto)',
         ok: false
       }, {
         icon: '💬',
         label: 'SMS DE → EU',
-        detail: 'ca. 0,09 € pro SMS',
+        detail: 'bis ca. 0,07 € pro SMS (EU-Preisgrenze, brutto)',
         ok: false
       }, {
         icon: '🌐',
@@ -14795,14 +14795,14 @@ const RoamingModal = ({
         detail: 'WhatsApp/FaceTime gratis',
         ok: true
       }],
-      tip: 'Tipp für Kunden: WhatsApp, FaceTime oder Signal als kostenlose Alternative empfehlen — läuft über das normale Datenvolumen.'
+      tip: 'Tipp für Kunden: WhatsApp, FaceTime oder Signal als kostenlose Alternative empfehlen — läuft über das normale Datenvolumen. Genauer Preis je Tarif/Option: Mein o2 → Tarifdetails.'
     },
     world: {
       label: 'Weltreise (Drittland)',
       flag: '🌍',
       badge: 'Achtung: Kosten!',
       badgeColor: '#f59e0b',
-      subtitle: 'Außerhalb der EU unterwegs',
+      subtitle: 'Außerhalb der EU (Weltzone 3 & 4)',
       headerBg: 'linear-gradient(135deg,#78350f,#d97706,#92400e)',
       status: 'danger',
       statusText: 'Hohes Kostenrisiko',
@@ -14811,59 +14811,64 @@ const RoamingModal = ({
       items: [{
         icon: '📞',
         label: 'Telefonieren',
-        detail: 'Bis 3,00 €/Min möglich',
+        detail: 'Zone 3: 1,49 €/Min ab · 0,69 € an — Zone 4: 2,49 / 1,59 €',
         ok: false
       }, {
         icon: '💬',
         label: 'SMS',
-        detail: 'Bis 1,00 € pro SMS',
+        detail: 'Senden ab 0,39 € · Empfangen kostenlos',
         ok: false
       }, {
         icon: '🌐',
         label: 'Daten',
-        detail: 'Bis 24 €/MB (Zone 3)!',
+        detail: 'Zone 3: 0,99 €/MB — Zone 4: 1,49 €/MB',
         ok: false
       }, {
         icon: '✅',
         label: 'Lösung',
-        detail: 'Roaming-Option buchen!',
+        detail: 'Roaming Plus World: 2 GB für 14,99 € (30 Tage)',
         ok: true
       }],
-      tip: 'Unbedingt vor der Reise eine Roaming-Option buchen! Daten sonst am besten vollständig deaktivieren und nur WLAN nutzen.'
+      tip: 'Unbedingt vor der Reise Roaming Plus World buchen (über 100 Länder, u. a. USA, Türkei, Kanada)! Das Paket enthält nur Daten, Telefonie und SMS laufen zu den Standardpreisen. Kostenbremse: 59,50 € pro Abrechnungszeitraum.'
     },
     swiss: {
       label: 'Schweiz / UK',
       flag: '🇨🇭',
       badge: 'Sonderregel',
       badgeColor: '#8b5cf6',
-      subtitle: 'Nicht-EU aber Sonderabkommen',
+      subtitle: 'Nicht-EU (Weltzone 2)',
       headerBg: 'linear-gradient(135deg,#4c1d95,#7c3aed,#5b21b6)',
       status: 'warn',
-      statusText: 'Teilweise inklusive',
-      statusSub: 'Schweiz & UK haben Sonderkonditionen je nach Tarif',
-      countries: ['🇨🇭 Schweiz', '🇬🇧 Großbritannien', '🇳🇴 Norwegen', '🇮🇸 Island', '🇱🇮 Liechtenstein'],
+      statusText: 'Nicht wie EU',
+      statusSub: 'Schweiz = Weltzone 2 (kein EU-Roaming). UK: bis 31.12.2026 wie EU abgerechnet',
+      countries: ['🇨🇭 Schweiz', '🇬🇧 Großbritannien', '🇦🇩 Andorra', '🇬🇮 Gibraltar', '🇮🇲 Isle of Man'],
       items: [{
         icon: '📞',
-        label: 'Telefonieren',
-        detail: 'Je nach Tarif variabel',
-        ok: null
+        label: 'Telefonieren (CH)',
+        detail: '0,54 €/Min abgehend · 0,26 € ankommend',
+        ok: false
       }, {
         icon: '💬',
-        label: 'SMS',
-        detail: 'Meist inklusive',
-        ok: true
-      }, {
-        icon: '🌐',
-        label: 'Daten (UK)',
-        detail: 'Oft inklusive (post-Brexit)',
-        ok: true
+        label: 'SMS (CH)',
+        detail: 'Senden 0,39 € · Empfangen kostenlos',
+        ok: false
       }, {
         icon: '🇨🇭',
         label: 'Daten (CH)',
-        detail: 'Häufig kostenpflichtig',
+        detail: 'Tagespaket automatisch: 2,99 € für 300 MB',
         ok: false
+      }, {
+        icon: '🇬🇧',
+        label: 'Großbritannien',
+        detail: 'Bis 31.12.2026 wie EU, danach offen',
+        ok: null
+      }, {
+        icon: '✅',
+        label: 'Lösung',
+        detail: 'Roaming Plus 1 Monat: 9,99 € mit 3 GB, 500 Min., 500 SMS',
+        ok: true
       }],
-      tip: 'Tarif genau prüfen! Großbritannien gilt bei den meisten Telekom-Tarifen nach dem Brexit wieder als EU-gleichgestellt. Schweiz ist oft separat.'
+      tip: 'Schweiz-Pendler: Roaming Plus 24 (4,99 €/Monat, 24 Monate Laufzeit). Großbritannien wird laut o2 bis 31.12.2026 wie EU abgerechnet, eine Verlängerung ist nicht garantiert.'
     }
   };
   const z = ZONES[zone];
@@ -15136,7 +15141,9 @@ const RoamingModal = ({
       background: item.ok === true ? '#dcfce7' : item.ok === false ? '#fee2e2' : '#fef9c3',
       color: item.ok === true ? '#16a34a' : item.ok === false ? '#dc2626' : '#92400e'
     }
-  }, item.ok === true ? '✓' : item.ok === false ? '✕' : '?')))), tab === 'countries' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, item.ok === true ? '✓' : item.ok === false ? '✕' : '?'))), z.tip ? /*#__PURE__*/React.createElement("div", {
+    className: "mt-3 text-xs text-slate-600 p-3 rounded-xl bg-amber-50 border border-amber-100"
+  }, "💡 ", z.tip) : null), tab === 'countries' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "text-[10px] font-black text-slate-400 uppercase tracking-wider mb-3"
   }, zone === 'eu_roam' ? 'EU-Länder (Roam like at Home gilt)' : zone === 'de_eu' ? 'Beispiel-Zielländer' : zone === 'swiss' ? 'Sonderregel-Länder' : 'Beispiel-Länder außerhalb der EU'), /*#__PURE__*/React.createElement("div", {
     className: "flex flex-wrap"
@@ -36212,7 +36219,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.34"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.35"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
