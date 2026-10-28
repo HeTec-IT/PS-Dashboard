@@ -264,12 +264,12 @@
 
         var manifestLink = document.createElement('link');
         manifestLink.rel = 'manifest';
-        manifestLink.href = 'manifest.webmanifest?v=55.28';
+        manifestLink.href = 'manifest.webmanifest?v=55.29';
         document.head.appendChild(manifestLink);
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js?v=55.28').catch(function (e) {
+                navigator.serviceWorker.register('sw.js?v=55.29').catch(function (e) {
                     console.warn('SW-Registrierung fehlgeschlagen:', e);
                 });
             });
@@ -632,6 +632,7 @@
             if (endRefreshTimer) { clearInterval(endRefreshTimer); endRefreshTimer = null; }
             overlay.style.display = 'none';
             if (pauseBtn) pauseBtn.style.display = '';
+            if (endBtn) endBtn.style.display = '';
             try {
                 if (previousFocus && previousFocus.isConnected && previousFocus.focus) {
                     previousFocus.focus({ preventScroll: true });
@@ -663,6 +664,7 @@
             }
             refreshEnd();
             if (pauseBtn) pauseBtn.style.display = 'none';
+            if (endBtn) endBtn.style.display = 'none';
             if (continueBtn) continueBtn.focus();
             // Nicht schliessen: Der Countdown bleibt sichtbar, verlassen wird per Home-Geste.
         }
@@ -829,6 +831,7 @@
             messageEl.textContent = DEFAULT_MSG;
             refreshEnd();
             if (pauseBtn) pauseBtn.style.display = '';
+            if (endBtn) endBtn.style.display = '';
             dialogVisible = true;
             overlay.style.display = 'flex';
             if (endRefreshTimer) clearInterval(endRefreshTimer);
@@ -909,7 +912,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.28';
+    window.APP_VERSION = '55.29';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -36099,7 +36102,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.28"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.29"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
