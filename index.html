@@ -25989,7 +25989,10 @@ function App() {
   // NICHT wiederverwendet oder ueberschrieben.
   // ═════════════════════════════════════════════════
   const FOLLOWUP_FLOW_URL = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com/powerautomate/automations/direct/cu/16/workflows/78ada59282fd433e88742db3017301f2/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=wKov_vZB3VBSzdsZ-oAEnt7PS5LCJ4xy9CstE2qF-ME';
-  window.FOLLOWUP_FLOW_URL = FOLLOWUP_FLOW_URL; // AdminModal (eigene Komponente) braucht das fuer den Test-Button
+  // Neuer 12-Shops-Flow: vorerst NUR Aalen; alle anderen Shops nutzen weiter den alten Flow
+  const FOLLOWUP_FLOW_URL_AALEN = 'https://defaultbffb3b9ff04a4553a4bd451341d982.c3.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/04/workflows/9838c9100c084c9895c83aea0c34a910/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=urDuk2jtdtj7FeF6UZBPNqnsxSuONoaoLXNK0HNUy-I';
+  const followUpFlowUrlFor = ort => ort === 'Aalen' ? FOLLOWUP_FLOW_URL_AALEN : FOLLOWUP_FLOW_URL;
+  window.FOLLOWUP_FLOW_URL = FOLLOWUP_FLOW_URL_AALEN; // Test-Button sendet Shop Aalen
   // Archiv-Postfach: hierhin schickt der Mitarbeiter das abgeschlossene Angebot (Power Automate sortiert es weiter)
   const ARCHIV_EMAIL = 'pencil-selling@hetec-gmbh.de';
   // Shopabhängige SharePoint-/OneDrive-Ordner für das Archiv-Popup.
@@ -36691,7 +36694,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         // Echter Folgetermin (kein noAppointment) -> Power-Automate-Flow ausloesen.
         // Feuer-und-vergiss: darf den Abschlussprozess niemals blockieren/abbrechen.
         try {
-          fetch(FOLLOWUP_FLOW_URL, {
+          fetch(followUpFlowUrlFor(CURRENT_SHOP.ort), {
             method: 'POST',
             mode: 'no-cors',
             keepalive: true,
