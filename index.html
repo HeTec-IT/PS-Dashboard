@@ -11120,6 +11120,27 @@ const FolgeterminModal = ({
   React.useEffect(() => {
     setEmail(defaultEmail || '');
   }, [isOpen, defaultEmail]);
+  // E-Mail ist Pflicht (Power-Automate-Folgetermin braucht eine echte Adresse).
+  // Vorbelegt wird sie aus Seite 1, wenn dort digital (Tastatur) eingegeben wurde;
+  // sonst muss der Mitarbeiter sie hier eintragen. Ohne Folgetermin keine E-Mail nötig.
+  const emailTrim = String(email || '').trim();
+  const emailValid = /^[A-Za-z0-9._%+'\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$/.test(emailTrim) && !/@(beispiel|example|test)\.(de|com|org|net)$/i.test(emailTrim);
+  const canConfirm = noAppointment || !!date && emailValid;
+  const emailHint = emailTrim && !emailValid ? React.createElement("div", {
+    style: {
+      marginTop: '6px',
+      fontSize: '11px',
+      fontWeight: 700,
+      color: '#dc2626'
+    }
+  }, "Bitte eine gültige E-Mail-Adresse eingeben") : emailValid && defaultEmail && emailTrim.toLowerCase() === String(defaultEmail).trim().toLowerCase() ? React.createElement("div", {
+    style: {
+      marginTop: '6px',
+      fontSize: '11px',
+      fontWeight: 700,
+      color: '#16a34a'
+    }
+  }, "✓ Aus Seite 1 übernommen") : null;
   return /*#__PURE__*/React.createElement("div", {
     className: "fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4 animate-in fade-in"
   }, /*#__PURE__*/React.createElement("div", {
@@ -11252,16 +11273,18 @@ const FolgeterminModal = ({
       display: 'block',
       marginBottom: '6px'
     }
-  }, "E-Mail des Kunden (optional)"), /*#__PURE__*/React.createElement("input", {
+  }, "E-Mail des Kunden (Pflicht)"), /*#__PURE__*/React.createElement("input", {
     type: "email",
     value: email,
     onChange: e => setEmail(e.target.value),
+    autoCapitalize: "none",
+    spellCheck: false,
     placeholder: "kunde@beispiel.de",
     style: {
       width: '100%',
       padding: '10px 12px',
       borderRadius: '10px',
-      border: '1.5px solid #e2e8f0',
+      border: '1.5px solid ' + (emailTrim && !emailValid ? '#ef4444' : '#e2e8f0'),
       fontSize: '14px',
       fontWeight: 700,
       color: '#0f172a',
@@ -11270,8 +11293,8 @@ const FolgeterminModal = ({
       outline: 'none'
     },
     onFocus: e => e.target.style.borderColor = '#3b82f6',
-    onBlur: e => e.target.style.borderColor = '#e2e8f0'
-  }))), /*#__PURE__*/React.createElement("button", {
+    onBlur: e => e.target.style.borderColor = emailTrim && !emailValid ? '#ef4444' : '#e2e8f0'
+  }), emailHint)), /*#__PURE__*/React.createElement("button", {
     onClick: () => setNoAppointment(p => !p),
     style: {
       display: 'flex',
@@ -11313,27 +11336,30 @@ const FolgeterminModal = ({
       marginTop: '1px'
     }
   }, "Kunde hat keinen Termin vereinbart"))), /*#__PURE__*/React.createElement("button", {
-    onClick: () => onConfirm({
-      date,
-      time,
-      email,
-      noAppointment
-    }),
-    disabled: !noAppointment && !date,
+    onClick: () => {
+      if (!canConfirm) return;
+      onConfirm({
+        date,
+        time,
+        email: emailTrim,
+        noAppointment
+      });
+    },
+    disabled: !canConfirm,
     style: {
       width: '100%',
       padding: '14px',
       borderRadius: '14px',
-      background: !noAppointment && !date ? '#e2e8f0' : 'linear-gradient(135deg,#2563eb,#1d4ed8)',
-      color: !noAppointment && !date ? '#94a3b8' : '#fff',
+      background: !canConfirm ? '#e2e8f0' : 'linear-gradient(135deg,#2563eb,#1d4ed8)',
+      color: !canConfirm ? '#94a3b8' : '#fff',
       fontWeight: 900,
       fontSize: '15px',
-      cursor: !noAppointment && !date ? 'not-allowed' : 'pointer',
+      cursor: !canConfirm ? 'not-allowed' : 'pointer',
       border: 'none',
       transition: 'all 0.15s',
       letterSpacing: '-0.01em'
     }
-  }, noAppointment ? '✅ Ohne Folgetermin fortfahren' : date ? '📅 Folgetermin bestätigen' : 'Bitte Datum auswählen'), /*#__PURE__*/React.createElement("button", {
+  }, noAppointment ? '✅ Ohne Folgetermin fortfahren' : !date ? 'Bitte Datum auswählen' : !emailValid ? 'Bitte gültige E-Mail eingeben' : '📅 Folgetermin bestätigen'), /*#__PURE__*/React.createElement("button", {
     onClick: onClose,
     style: {
       background: 'none',
