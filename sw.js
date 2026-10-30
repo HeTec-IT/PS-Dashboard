@@ -1,6 +1,6 @@
 // Pencil Selling – o2 – Service Worker
 // Beim Update NUR diese Versionsnummer hochzählen -> alte Caches werden entfernt.
-const CACHE = "pencil-o2-v10";
+const CACHE = "pencil-o2-v11";
 const SHELL = ["./", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {

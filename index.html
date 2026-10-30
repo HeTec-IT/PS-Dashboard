@@ -29283,6 +29283,7 @@ function App() {
               try {
                 clearAutosave();
               } catch (e) {}
+              try { if (window.__psClearActiveSession) window.__psClearActiveSession(); } catch (_) {}
               setTimeout(() => {
                 try {
                   window.__psIntentionalReload = true;
@@ -29525,6 +29526,7 @@ function App() {
               try {
                 clearAutosave();
               } catch (e) {}
+              try { if (window.__psClearActiveSession) window.__psClearActiveSession(); } catch (_) {}
               // v53k: Reload erst, wenn der (System-)Teilen-Dialog
               // wirklich zu ist – Windows resolved schon beim Oeffnen.
               nachTeilenAusfuehren(() => {
@@ -35919,6 +35921,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         setSessionOfferId(null);
         try { handleClearAll(); } catch (e) {}
         try { clearAutosave(); } catch (e) {}
+        // Sitzung hart sperren: sonst schreibt das visibilitychange beim Reload noch einmal den alten Stand als Pause zurueck.
+        try { if (window.__psClearActiveSession) window.__psClearActiveSession(); } catch (_) {}
         try {
           window.__psIntentionalReload = true;
           window.location.reload();
@@ -36703,13 +36707,13 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
             },
             body: JSON.stringify({
               shop: CURRENT_SHOP.ort || '',
-              agent: window.__PS_PROFILE_NAME || LINK_EMPLOYEE || '',
+              agent: window.__PS_PROFILE_NAME || LINK_EMPLOYEE || 'o2 Berater',
               kunde: (
                 sharedKundeRef.current ||
                 textData?.Kundenname ||
                 textData?.CustomerName ||
                 ''
-              ).toString().trim(),
+              ).toString().trim() || 'Kunde',
               email: result.email || '',
               datum: result.date,
               zeit: result.time || ''
