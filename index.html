@@ -11385,7 +11385,8 @@ const ReferralModal = ({
   step1Done,
   pdfBereit,
   istAbschluss,
-  archivLaeuft
+  archivLaeuft,
+  archivErfolg
 }) => {
   // v53: Umbau auf klare 2-Schritte-Führung.
   // Schritt 1: Angebot an den Kunden übergeben (Direkt-Teilen; PDF wurde
@@ -11400,6 +11401,20 @@ const ReferralModal = ({
   // Buttons, kein Abbrechen. So kann der Verkaeufer nicht mehr in der
   // App herumtippen, waehrend im Hintergrund der Neustart vorbereitet
   // wird (genau das fuehlte sich vorher wie ein Absturz an).
+  // Archivierung geklappt: kurze, klare Bestaetigung VOR dem Neustart (sonst ging der Hinweis beim Reload unter).
+  if (archivErfolg) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4 no-print"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "bg-white w-full max-w-sm rounded-3xl shadow-2xl p-8 text-center border border-slate-200"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { width: '56px', height: '56px', margin: '0 auto 14px', borderRadius: '50%', background: '#16a34a', color: '#fff', fontSize: '32px', lineHeight: '56px', fontWeight: 900 }
+    }, "✓"), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: '18px', fontWeight: 900, color: '#0f172a', marginBottom: '6px' }
+    }, "Archivierung erfolgreich"), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: '13px', color: '#64748b', lineHeight: 1.5 }
+    }, archivErfolg.name ? archivErfolg.name + " wurde an das Archiv gesendet." : "Das Dokument wurde an das Archiv gesendet.", /*#__PURE__*/React.createElement("br", null), "Die Ablage in SharePoint siehst du unter Meine Statistik → Archiv.", /*#__PURE__*/React.createElement("br", null), "Die App startet jetzt neu.")));
+  }
   if (archivLaeuft) {
     return /*#__PURE__*/React.createElement("div", {
       className: "fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4 no-print"
@@ -18934,6 +18949,252 @@ const PinLockModal = ({
     }
   }, "Abbrechen")))));
 };
+// ═════════════════════════════════════════════════════════════════
+// ARCHIV-PROTOKOLL (Meine Statistik → Archiv): eigene Archivierungen der letzten 30 Tage.
+//   Quellen: Suchindex "pdf_index" (Eintrag nach Uebergabe an den Archiv-Flow, uid = Mitarbeiter),
+//            lokal wartende Eintraege (kein Netz), geparkte Vorgaenge, lokal protokollierte Uebergabe-Fehler.
+//   Ablage-Pruefung: Flow "PDF Archiv API V3", Aktion  exists  { names:[...] } → { ok:true, found:[...] }  (SharePoint).
+//     - gefunden                      → "Archivierung erfolgreich"
+//     - nicht gefunden, < 20 Minuten  → "Wird abgelegt …"
+//     - nicht gefunden, >= 20 Minuten → "Archivierung fehlgeschlagen"
+//     - Pruefung nicht moeglich (Flow kennt die Aktion noch nicht) → "erfolgreich" mit Hinweis "Ablage nicht geprueft"
+// ═════════════════════════════════════════════════════════════════
+const PS_ARCHFAIL_KEY = 'ps_archfail_v1';
+const PS_ARCHOK_KEY = 'ps_archverified_v1';
+const PS_ARCH_ABLAGE_MIN = 20;
+const psArchFailGet = () => {
+  try {
+    const a = JSON.parse(localStorage.getItem(PS_ARCHFAIL_KEY) || '[]');
+    const alt = Date.now() - 30 * 86400000;
+    return Array.isArray(a) ? a.filter(x => x && x.fileName && (x.ts || 0) > alt) : [];
+  } catch (e) {
+    return [];
+  }
+};
+const psArchFailLog = (fileName, betreff, err) => {
+  try {
+    const f = String(betreff || '').split('|');
+    let ctx = null;
+    try {
+      const c = window.__psIdxCtx;
+      if (c && c.dateiname === fileName) ctx = c;
+    } catch (e) {}
+    const a = psArchFailGet().filter(x => psIdxId(x.fileName) !== psIdxId(fileName));
+    a.push({
+      fileName: String(fileName || '').slice(0, 180),
+      typ: f[1] === 'abschluss' ? 'abschluss' : 'angebot',
+      kunde: String(ctx && ctx.kunde || '').slice(0, 80),
+      ruf: String(ctx && ctx.ruf || (() => { try { return psArchParseFile(fileName, []).phone; } catch (e) { return ''; } })() || '').slice(0, 24),
+      shopId: String(window.__PS_SHOP_ORT || window.__PS_SHOP || '').toLowerCase().slice(0, 40),
+      ts: Date.now(),
+      uid: String(window.__PS_USER_UID || ''),
+      reason: String(err && err.message || err || '').slice(0, 120)
+    });
+    localStorage.setItem(PS_ARCHFAIL_KEY, JSON.stringify(a.slice(-100)));
+  } catch (e) {}
+};
+const psArchOkGet = () => {
+  try {
+    const o = JSON.parse(localStorage.getItem(PS_ARCHOK_KEY) || '{}');
+    const alt = Date.now() - 31 * 86400000;
+    const r = {};
+    Object.keys(o || {}).forEach(k => { if ((o[k] || 0) > alt) r[k] = o[k]; });
+    return r;
+  } catch (e) {
+    return {};
+  }
+};
+const psArchOkSet = o => {
+  try { localStorage.setItem(PS_ARCHOK_KEY, JSON.stringify(o)); } catch (e) {}
+};
+// Fragt den Flow, welche Dateien wirklich in SharePoint liegen. available=false → Flow kann es (noch) nicht.
+const psArchVerify = async (cfg, names) => {
+  const found = new Set();
+  if (!cfg || !cfg.url || !names.length) return { available: false, found };
+  try {
+    for (let i = 0; i < names.length; i += 40) {
+      const res = await psArchRequest(cfg, { action: 'exists', names: names.slice(i, i + 40) }, 30000);
+      if (!res || res.ok !== true || !Array.isArray(res.found)) return { available: false, found };
+      res.found.forEach(n => found.add(psIdxId(n)));
+    }
+    return { available: true, found };
+  } catch (e) {
+    return { available: false, found };
+  }
+};
+// 4 Kalenderwochen (Mo–So): diese Woche + 3 davor
+const psArchWeekStart = (ts, back) => {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7 * (back || 0));
+  return d.getTime();
+};
+const psArchWeeksStart = now => psArchWeekStart(now, 3);
+const psArchIsoWeek = ms => {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const w1 = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d.getTime() - w1.getTime()) / 86400000 - 3 + ((w1.getDay() + 6) % 7)) / 7);
+};
+const ArchivProtokollView = () => {
+  const h = React.createElement;
+  const [st, setSt] = React.useState({ loading: true, rows: [], error: '', verifyAvailable: false });
+  const [openWeeks, setOpenWeeks] = React.useState({}); // Standard: alle Wochen eingeklappt
+  const load = React.useCallback(async () => {
+    setSt(x => ({ ...x, loading: true }));
+    const now = Date.now();
+    const since = psArchWeeksStart(now);
+    const uid = String(window.__PS_USER_UID || '').trim();
+    let items = [], error = '';
+    const cfg = (window.__psArchCfgGetter && window.__psArchCfgGetter()) || {};
+    try {
+      const db = psIdxDb();
+      if (!db || !uid) throw new Error('no-db');
+      if (psArchOffline()) throw new Error('offline');
+      const shops = cfg.isAdmin ? [''] : (cfg.allowedIds || []).slice();
+      const rs = await Promise.allSettled(shops.map(shop => {
+        let q = db.collection(PS_IDX_COLL);
+        if (shop) q = q.where('shopId', '==', shop);
+        return q.where('uid', '==', uid).limit(300).get();
+      }));
+      const map = new Map();
+      let ok = 0;
+      rs.forEach(r => {
+        if (r.status !== 'fulfilled') return;
+        ok++;
+        r.value.forEach(d => {
+          const x = d.data();
+          if (x && x.fileName && (x.ts || 0) >= since) map.set(d.id, x);
+        });
+      });
+      if (!ok && shops.length) error = 'Archiv-Protokoll konnte nicht geladen werden (Verbindung oder Berechtigung).';
+      items = Array.from(map.values());
+    } catch (e) {
+      error = 'Archiv-Protokoll konnte nicht geladen werden (kein Internet?).';
+    }
+    const ids = new Set(items.map(x => psIdxId(x.fileName)));
+    let queued = [], parked = [];
+    try {
+      queued = psIdxQueueGet().filter(x => String(x.uid || '') === uid && (x.ts || 0) >= since && !ids.has(psIdxId(x.fileName)));
+    } catch (e) {}
+    try {
+      parked = (await listParkedArchive() || []).filter(x => (x.ts || 0) >= since);
+    } catch (e) {}
+    // Ablage in SharePoint pruefen (nur fuer noch nicht bestaetigte Dateien)
+    const okMap = psArchOkGet();
+    const toCheck = items.filter(x => !okMap[psIdxId(x.fileName)]);
+    let verifyAvailable = false;
+    if (toCheck.length && !error) {
+      const v = await psArchVerify(cfg, toCheck.map(x => x.fileName));
+      verifyAvailable = v.available;
+      if (v.available) {
+        toCheck.forEach(x => { if (v.found.has(psIdxId(x.fileName))) okMap[psIdxId(x.fileName)] = now; });
+        psArchOkSet(okMap);
+      }
+    } else if (!toCheck.length && items.length) {
+      verifyAvailable = true; // alles bereits frueher bestaetigt
+    }
+    const rows = [];
+    items.forEach(e => {
+      const id = psIdxId(e.fileName);
+      let status;
+      if (okMap[id]) status = 'ok';
+      else if (verifyAvailable) status = now - (e.ts || 0) < PS_ARCH_ABLAGE_MIN * 60000 ? 'wait' : 'fail';
+      else status = 'ok_unchecked';
+      rows.push({ key: 'i' + e.fileName, e, status });
+    });
+    queued.forEach(e => rows.push({ key: 'q' + e.fileName, e, status: 'wait_net' }));
+    parked.forEach(e => rows.push({ key: 'p' + e.id, e, status: 'parked' }));
+    psArchFailGet().filter(x => String(x.uid || '') === uid && (x.ts || 0) >= since && !ids.has(psIdxId(x.fileName)) && !okMap[psIdxId(x.fileName)]).forEach(e => rows.push({ key: 'f' + e.fileName, e, status: 'fail_send' }));
+    rows.sort((a, b) => (b.e.ts || 0) - (a.e.ts || 0));
+    setSt({ loading: false, rows, error, verifyAvailable });
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  const fmt = ts => {
+    try { return new Date(ts).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+  };
+  const shopName = id => (typeof SHOPS !== 'undefined' && SHOPS && SHOPS[id] && SHOPS[id].name) || id || '';
+  const INFO = {
+    ok: { icon: '\u2705', text: 'Archivierung erfolgreich', sub: 'in SharePoint abgelegt', color: '#15803d' },
+    ok_unchecked: { icon: '\u2705', text: 'Archivierung erfolgreich', sub: 'gesendet \u00B7 Ablage nicht gepr\u00FCft', color: '#15803d' },
+    wait: { icon: '\u23F3', text: 'Wird abgelegt \u2026', sub: 'wird noch in SharePoint abgelegt', color: '#b45309' },
+    wait_net: { icon: '\u23F3', text: 'Wartet auf Verbindung', sub: 'wird automatisch nachgesendet', color: '#b45309' },
+    parked: { icon: '\u23F3', text: 'Geparkt', sub: 'noch nicht gesendet \u2013 unter \u201EGeparkte Vorg\u00E4nge\u201C nachtragen', color: '#b45309' },
+    fail: { icon: '\u274C', text: 'Archivierung fehlgeschlagen', sub: 'nicht in SharePoint gefunden \u2013 bitte erneut archivieren', color: '#dc2626' },
+    fail_send: { icon: '\u274C', text: 'Archivierung fehlgeschlagen', sub: 'nicht gesendet \u2013 bitte erneut archivieren', color: '#dc2626' }
+  };
+  const row = r => {
+    const e = r.e, I = INFO[r.status];
+    const isAbs = e.typ === 'abschluss' || e.type === 'abschluss';
+    // Abschluss: die Nummer (Handy / Festnetz / MSID / Subscription-ID) ist die Kennung, der Kundenname nur Zusatz
+    const titel = isAbs ? (e.ruf || e.kunde || '\u2013') : (e.kunde || e.ruf || '\u2013');
+    const zusatz = isAbs ? (e.ruf && e.kunde ? e.kunde : '') : (e.kunde && e.ruf ? e.ruf : '');
+    return h('div', {
+      key: r.key,
+      style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderBottom: '1px solid #f1f5f9', background: r.status.indexOf('fail') === 0 ? '#fef2f2' : '#fff' }
+    }, h('div', { style: { fontSize: '18px', width: '24px', textAlign: 'center' } }, I.icon),
+    h('div', { style: { flex: 1, minWidth: 0 } },
+      h('div', { style: { fontSize: '13px', fontWeight: 800, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+        (isAbs ? 'Abschluss' : 'Angebot') + ' \u00B7 ' + titel),
+      h('div', { style: { fontSize: '11px', color: '#64748b' } }, fmt(e.ts) + (e.shopId ? ' \u00B7 ' + shopName(e.shopId) : '') + (zusatz ? ' \u00B7 ' + zusatz : ''))),
+    h('div', { style: { textAlign: 'right', maxWidth: '45%' } },
+      h('div', { style: { fontSize: '12px', fontWeight: 800, color: I.color } }, I.text),
+      h('div', { style: { fontSize: '10.5px', color: '#94a3b8' } }, I.sub)));
+  };
+  const weeks = (() => {
+    const fm = ms => new Date(ms).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+    const out = [];
+    for (let i = 0; i < 4; i++) {
+      const start = psArchWeekStart(Date.now(), i);
+      const endD = new Date(start); endD.setDate(endD.getDate() + 7);
+      const end = endD.getTime();
+      out.push({
+        key: 'w' + start,
+        title: i === 0 ? 'Diese Woche' : i === 1 ? 'Letzte Woche' : 'KW ' + psArchIsoWeek(start),
+        range: fm(start) + ' \u2013 ' + fm(end - 1),
+        rows: st.rows.filter(r => (r.e.ts || 0) >= start && (r.e.ts || 0) < end)
+      });
+    }
+    return out;
+  })();
+  const cnt = f => st.rows.filter(r => f(r.status)).length;
+  const nOk = cnt(x => x === 'ok' || x === 'ok_unchecked'), nFail = cnt(x => x.indexOf('fail') === 0), nWait = cnt(x => x === 'wait' || x === 'wait_net' || x === 'parked');
+  const chip = (txt, c, bg, bd) => h('div', { style: { fontSize: '11px', fontWeight: 800, color: c, background: bg, border: '1px solid ' + bd, borderRadius: '8px', padding: '3px 8px' } }, txt);
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+      h('div', { style: { fontSize: '13px', fontWeight: 900, color: '#0f172a' } }, 'Meine Archivierungen \u00B7 letzte 4 Wochen'),
+      chip('\u2705 ' + nOk + ' erfolgreich', '#15803d', '#f0fdf4', '#bbf7d0'),
+      nFail > 0 && chip('\u274C ' + nFail + ' fehlgeschlagen', '#dc2626', '#fef2f2', '#fecaca'),
+      nWait > 0 && chip('\u23F3 ' + nWait + ' offen', '#b45309', '#fffbeb', '#fde68a'),
+      h('button', { onClick: load, style: { marginLeft: 'auto', padding: '5px 11px', borderRadius: '8px', fontSize: '11px', fontWeight: 700, background: '#fff', color: '#1e3a8a', border: '1px solid #cbd5e1', cursor: 'pointer' } }, '\u21BB Aktualisieren')),
+    st.error && h('div', { style: { fontSize: '12px', fontWeight: 700, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '8px 12px' } }, '\u26A0\uFE0F ' + st.error),
+    st.loading ? h('div', { style: { padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', fontWeight: 600 } }, '\u23F3 Lade Archiv-Protokoll\u2026')
+      : (st.rows.length === 0 && !st.error) ? h('div', { style: { padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', fontWeight: 600, background: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0' } }, '\uD83D\uDCED Noch keine Archivierungen in den letzten 4 Wochen')
+      : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } }, weeks.map(w => {
+        const isOpen = !!openWeeks[w.key] && w.rows.length > 0;
+        const cc = f => w.rows.filter(r => f(r.status)).length;
+        const wOk = cc(x => x === 'ok' || x === 'ok_unchecked'), wFail = cc(x => x.indexOf('fail') === 0), wWait = cc(x => x === 'wait' || x === 'wait_net' || x === 'parked');
+        const mini = (txt, c) => h('span', { style: { fontSize: '11px', fontWeight: 800, color: c } }, txt);
+        return h('div', { key: w.key, style: { background: '#fff', borderRadius: '14px', border: '1px solid ' + (wFail ? '#fecaca' : '#e2e8f0'), overflow: 'hidden' } },
+          h('button', {
+            type: 'button', 'aria-expanded': isOpen,
+            onClick: () => { if (w.rows.length) setOpenWeeks(o => ({ ...o, [w.key]: !o[w.key] })); },
+            style: { width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 12px', background: wFail ? '#fef2f2' : '#f8fafc', border: 'none', borderBottom: isOpen ? '1px solid #e2e8f0' : 'none', cursor: w.rows.length ? 'pointer' : 'default', textAlign: 'left', fontFamily: 'inherit' }
+          }, h('span', { style: { fontSize: '12px', color: '#64748b', width: '14px', opacity: w.rows.length ? 1 : 0.3 } }, isOpen ? '\u25BC' : '\u25B6'),
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            h('div', { style: { fontSize: '13px', fontWeight: 900, color: '#0f172a' } }, w.title),
+            h('div', { style: { fontSize: '11px', color: '#64748b' } }, w.range)),
+          w.rows.length === 0 ? h('span', { style: { fontSize: '11px', color: '#94a3b8', fontWeight: 600 } }, 'keine')
+            : h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+              wOk > 0 && mini('\u2705 ' + wOk, '#15803d'),
+              wFail > 0 && mini('\u274C ' + wFail, '#dc2626'),
+              wWait > 0 && mini('\u23F3 ' + wWait, '#b45309'))),
+          isOpen && h('div', null, w.rows.map(row)));
+      })),
+    h('div', { style: { fontSize: '10.5px', color: '#94a3b8', lineHeight: 1.5 } }, st.verifyAvailable ? '\u201EErfolgreich\u201C = Datei wurde in SharePoint gefunden. Dauert die Ablage l\u00E4nger als ' + PS_ARCH_ABLAGE_MIN + ' Minuten, gilt sie als fehlgeschlagen. Angezeigt werden die letzten 4 Wochen.' : '\u201EErfolgreich\u201C = vom Archiv-Ablauf angenommen (die Ablage in SharePoint wird noch nicht gepr\u00FCft). Angezeigt werden die letzten 4 Wochen.'));
+};
+
 const StatsModal = ({
   isOpen,
   onClose,
@@ -19606,7 +19867,7 @@ const StatsModal = ({
       padding: '3px',
       gap: '2px'
     }
-  }, TAB('uebersicht', 'Übersicht', '📈'), TAB('entwicklung', 'Entwicklung', '📅'), TAB('coaching', 'Coaching', '🎯'), TAB('vorgaenge', 'Vorgänge', '📋'), isDiegoAdmin && TAB('skip-management', 'Skip-Limits', '⏭'))), /*#__PURE__*/React.createElement("div", {
+  }, TAB('uebersicht', 'Übersicht', '📈'), TAB('entwicklung', 'Entwicklung', '📅'), TAB('coaching', 'Coaching', '🎯'), TAB('vorgaenge', 'Vorgänge', '📋'), TAB('archiv', 'Archiv', '🗂️'), isDiegoAdmin && TAB('skip-management', 'Skip-Limits', '⏭'))), /*#__PURE__*/React.createElement("div", {
     className: "custom-scrollbar",
     style: {
       overflowY: 'auto',
@@ -20777,7 +21038,7 @@ const StatsModal = ({
       background: '#f8fafc',
       borderTop: '1px solid #f1f5f9'
     }
-  }, "+", filtered.length - 25, " weitere · Export via CSV"))), activeTab === 'skip-management' && isDiegoAdmin && (() => {
+  }, "+", filtered.length - 25, " weitere · Export via CSV"))), activeTab === 'archiv' && /*#__PURE__*/React.createElement(ArchivProtokollView, null), activeTab === 'skip-management' && isDiegoAdmin && (() => {
     const allAgents = Object.keys(skipAgentsData);
     return /*#__PURE__*/React.createElement("div", {
       style: {
@@ -26756,6 +27017,7 @@ function App() {
   const referralPdfRef = useRef(null); // vorab gerendertes PDF
   const [referralPdfBereit, setReferralPdfBereit] = useState(false);
   const [referralStep1Done, setReferralStep1Done] = useState(false);
+  const [archivErfolg, setArchivErfolg] = useState(null); // Bestaetigung 'Archiviert' vor dem Neustart
   const [archivLaeuft, setArchivLaeuft] = useState(false); // v53h: sperrt das Fenster bis zum Neustart
   const sharedMsisdnRef = useRef(''); // einmal eingegebene Rufnummer für Druck + Archiv
   const [rufModalOpen, setRufModalOpen] = useState(false);
@@ -27608,6 +27870,7 @@ function App() {
       } catch (e) {}
       const _datum = new Date().toISOString().slice(0, 10);
       const _ruf = (ruf || '').replace(/[^0-9+]/g, '');
+      if (!_ruf) throw new Error('Rufnummer fehlt – Abschluss ohne Nummer ist nicht möglich.');
       // ⚠️ GESPERRT: festes 4-Feld-Format (siehe buildArchivBetreff)
       const _betreff = buildArchivBetreff('abschluss', _datum, _ruf, _agent);
       // ⚠️ GESPERRT: PENCIL_-Präfix (siehe buildArchivDateiname)
@@ -34618,6 +34881,18 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       }
     } catch (e) {}
 
+    // HARTE SPERRE: Ein ABSCHLUSS ohne Rufnummer/Kennung wird NIE gesendet (kein "keineNr").
+    // Gilt fuer alle Wege (Archivieren, Nachtragen, Finalisieren, Auto-Nachsenden).
+    try {
+      if (String(betreff || '').split('|')[1] === 'abschluss') {
+        const _mk = /^PENCIL_([^_]+)_/i.exec(String(dateiname || ''));
+        if (!_mk || !/\d/.test(_mk[1]) || /^keineNr$/i.test(_mk[1])) {
+          try { triggerToast('Abschluss ohne Rufnummer ist nicht möglich. Bitte Nummer eingeben.'); } catch (e) {}
+          return { ok: false, blocked: true, error: new Error('Abschluss ohne Rufnummer ist nicht möglich.') };
+        }
+      }
+    } catch (e) {}
+
     // v53.7: EIN Ziel fuer ALLE Archiv-Wege (automatisch + manueller
     // Notfallbutton) - beide rufen jetzt sendArchivCopyToNewFlow() auf und
     // senden an dieselbe ARCHIVE_FLOW_URL. uploadPdfToPowerAutomate()/
@@ -34652,6 +34927,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         return { ok: true, handedToFlow: true };
       } catch (e) {
         console.warn('[ARCHIV-FLOW] Upload fehlgeschlagen:', e);
+        try { psArchFailLog(dateiname, betreff, e); } catch (_) {}
         try { triggerToast('⚠️ Archivierung fehlgeschlagen – Vorgang bleibt geöffnet.'); } catch (_) {}
         return { ok: false, error: e };
       }
@@ -35889,6 +36165,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     pdfBereit: referralPdfBereit,
     istAbschluss: !!customerSignature,
     archivLaeuft: archivLaeuft,
+    archivErfolg: archivErfolg,
     onFinish: async () => {
       if (archiveInFlightRef.current) return;
       archiveInFlightRef.current = true;
@@ -35912,6 +36189,13 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         }
 
         archiveSentRef.current = true;
+        try {
+          let _nm = '';
+          try { _nm = String(cleanKundeName(sharedKundeRef.current || textData?.Kundenname || '') || '').trim(); } catch (e) {}
+          if (/^(keinName|keineNr)$/i.test(_nm)) _nm = '';
+          setArchivErfolg({ name: _nm, typ: _typ });
+          await new Promise(r => setTimeout(r, 2400));
+        } catch (e) {}
         // Erst jetzt das fertiggestellte Cloud-/lokale Angebot entfernen.
         if (loadedOfferId) {
           try { await cloudDeleteOffer(loadedOfferId); } catch (e) {}
