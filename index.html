@@ -33134,11 +33134,15 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         ta.style.height = '100%';
         ta.style.textAlign = 'left';
         ta.style.verticalAlign = 'top';
-        ta.style.lineHeight = '1.7';
-        ta.style.padding = '16px';
+        ta.style.lineHeight = '1.5';
+        ta.style.padding = '22px 26px';
         ta.style.overflow = 'hidden';
         ta.style.zIndex = '20';
-        ta.style.fontSize = ta.style.fontSize || '17px';
+        // PDF: getippter Text groß + kräftig, damit er in der Angebotskarte nicht "verloren" wirkt
+        ta.style.fontSize = '30px';
+        ta.style.fontWeight = '600';
+        ta.style.color = '#0f172a';
+        ta.setAttribute('data-ps-pdf-font', '1');
         ta.style.resize = 'none';
         ta.style.border = 'none';
         ta.style.outline = 'none';
@@ -33768,13 +33772,15 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
                 div.style.overflow = 'hidden';
                 div.style.boxSizing = 'border-box';
                 div.style.fontFamily = 'inherit';
-                div.style.fontSize = 'inherit';
-                div.style.lineHeight = 'inherit';
-                div.style.color = 'inherit';
+                var _ownFont = ta.getAttribute('data-ps-pdf-font') === '1';
+                div.style.fontSize = _ownFont ? ta.style.fontSize : 'inherit';
+                div.style.lineHeight = _ownFont ? ta.style.lineHeight : 'inherit';
+                div.style.fontWeight = _ownFont ? ta.style.fontWeight : '';
+                div.style.color = _ownFont ? ta.style.color : 'inherit';
                 div.style.background = 'transparent';
                 div.style.border = 'none';
                 div.style.resize = 'none';
-                div.style.padding = window.getComputedStyle(ta).padding || '8px';
+                div.style.padding = _ownFont ? ta.style.padding : window.getComputedStyle(ta).padding || '8px';
                 div.style.margin = '0';
                 div.style.width = '100%';
                 div.style.height = '100%';
@@ -37126,7 +37132,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.38"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.39"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
