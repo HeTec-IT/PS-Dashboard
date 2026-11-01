@@ -27150,7 +27150,8 @@ function App() {
     shareSubject,
     archiveMode,
     hideOpenTab,
-    istArchiv
+    istArchiv,
+    printMode
   }) => new Promise(resolve => {
     let file = null;
     try {
@@ -27172,6 +27173,7 @@ function App() {
       shareSubject: buildShareSubject(filename, shareSubject),
       archiveMode: !!archiveMode,
       hideOpenTab: !!hideOpenTab,
+      printMode: !!printMode,
       // v53: "In neuem Tab öffnen" beim Archivieren ausblenden
       istArchiv: !!istArchiv,
       // v53g: Betreff auch auf Windows mitschicken
@@ -29009,7 +29011,7 @@ function App() {
     // im Druckdialog "Hintergrundgrafiken" (bzw. "Hintergrundfarben und -bilder") aktiviert ist.
     // Der CSS-Fix ist bereits aktiv, aber dieses Häkchen kann die Ausgabe trotzdem überschreiben.
     try {
-      if (typeof triggerToast === 'function') {
+      if (typeof triggerToast === 'function' && !window.html2pdf) {
         triggerToast('Tipp (STRG+P): In Chrome/Edge unter „Weitere Einstellungen“ → „Hintergrundgrafiken“ aktivieren, damit Farben/Hintergründe gedruckt werden.');
       }
     } catch (e) {/* ignore */}
@@ -29050,7 +29052,9 @@ function App() {
     // Daher auf iOS immer den flachen html2canvas-PDF-Weg + System-Teilen nutzen.
     const ua = navigator.userAgent || '';
     const isIOS = /iPad|iPhone|iPod/.test(ua) || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
-    if (isIOS) {
+    // Druck-Fix: Auch Desktop/Android drucken über das fertige A4-Querformat-PDF
+    // (Browser-Druckdialog ignoriert @page-Querformat teils → Hochformat). Ohne html2pdf: alter Weg.
+    if (isIOS || window.html2pdf) {
       // v57b: Nach dem Rendern den Teilen-Dialog zeigen. Dessen Tap ist
       // eine frische Geste → natives Teilen-Menü öffnet zuverlässig.
       (async () => {
@@ -29066,13 +29070,19 @@ function App() {
           await openShareSheet({
             blob,
             filename: buildKundenDateiname(),
-            title: 'PDF ist fertig!',
-            subtitle: 'Jetzt mit dem Kunden teilen oder öffnen.',
+            title: isIOS ? 'PDF ist fertig!' : 'PDF zum Drucken bereit',
+            subtitle: isIOS ? 'Jetzt mit dem Kunden teilen oder öffnen.' : 'Öffnen & drucken – das PDF ist fest im Querformat (A4).',
             shareText: buildKundenNachricht(),
-            shareSubject: KUNDEN_SHARE_BETREFF
+            shareSubject: KUNDEN_SHARE_BETREFF,
+            printMode: !isIOS
           });
         } catch (e) {
           triggerToast('PDF-Fehler: ' + (e && e.message ? e.message : 'Unbekannt'));
+          if (!isIOS) {
+            try {
+              window.print();
+            } catch (_e) {}
+          }
         }
       })();
       return;
@@ -37200,7 +37210,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.43"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.44"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
@@ -37682,7 +37692,49 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       fontSize: '12px',
       cursor: 'pointer'
     }
-  }, "📋 Betreff kopieren")), /*#__PURE__*/React.createElement("button", {
+  }, "📋 Betreff kopieren")), shareSheet.printMode && /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      const s = shareSheet;
+      setShareSheet(null);
+      try {
+        const url = URL.createObjectURL(s.file);
+        const t = window.open(url, '_blank');
+        if (!t) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = s.file.name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } else {
+          try {
+            triggerToast('PDF geöffnet – jetzt STRG+P (Querformat ist automatisch).');
+          } catch (e) {}
+        }
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch (e) {}
+        }, 300000);
+      } catch (e) {}
+      try {
+        s.resolve && s.resolve(true);
+      } catch (e) {}
+    },
+    style: {
+      width: '100%',
+      padding: '15px',
+      borderRadius: '14px',
+      border: 'none',
+      background: 'linear-gradient(135deg,#2563eb,#1d4ed8)',
+      color: '#fff',
+      fontWeight: 900,
+      fontSize: '16px',
+      cursor: 'pointer',
+      marginBottom: '10px',
+      boxShadow: '0 6px 16px rgba(37,99,235,0.35)'
+    }
+  }, "🖨️ Öffnen & drucken"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       const s = shareSheet;
       setShareSheet(null);
@@ -37755,7 +37807,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginBottom: '10px',
       boxShadow: '0 6px 16px rgba(37,99,235,0.35)'
     }
-  }, "📤 Jetzt teilen"), !shareSheet.hideOpenTab && /*#__PURE__*/React.createElement("button", {
+  }, "📤 Jetzt teilen"), !shareSheet.hideOpenTab && !shareSheet.printMode && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       const s = shareSheet;
       setShareSheet(null);
