@@ -33511,7 +33511,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         doc.body.appendChild(probe);
         let h = 0;
         try {
-          h = Math.max(costClone.scrollHeight || 0, costClone.offsetHeight || 0);
+          // offsetHeight = echte Boxhöhe (scrollHeight zählt überstehende/unsichtbare Elemente mit → viel zu hoch)
+          h = costClone.offsetHeight || costClone.scrollHeight || 0;
         } catch (e) {}
         probe.removeChild(costWrap);
         doc.body.removeChild(probe);
