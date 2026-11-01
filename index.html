@@ -33166,11 +33166,19 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         ta.style.padding = '22px 26px';
         ta.style.overflow = 'hidden';
         ta.style.zIndex = '20';
-        // PDF: getippter Text groß + kräftig, damit er in der Angebotskarte nicht "verloren" wirkt
-        ta.style.fontSize = '30px';
+        // PDF: getippter Text groß + kräftig, damit er in der Angebotskarte nicht "verloren" wirkt.
+        // Nur Text (kein Bild/keine Handschrift): bis 64px, wird beim Rendern automatisch so groß gewählt, dass er die Karte füllt.
+        // Mit Bild/Handschrift: 40px (Platz für die Medien).
+        let _hasMedia = false;
+        try {
+          const _stk = window.__psStrokes && window.__psStrokes['offer' + (offerIndex + 1)];
+          _hasMedia = (Array.isArray(_stk) && _stk.length > 0) || !!container.querySelector('img.canvas-image, img.canvas-image-fixed, .offer-html-overlay-wrap, .bundle-import-wrap');
+        } catch (e) {}
+        ta.style.fontSize = _hasMedia ? '40px' : '64px';
         ta.style.fontWeight = '600';
         ta.style.color = '#0f172a';
         ta.setAttribute('data-ps-pdf-font', '1');
+        if (!_hasMedia) ta.setAttribute('data-ps-pdf-fit', '1');
         ta.style.resize = 'none';
         ta.style.border = 'none';
         ta.style.outline = 'none';
@@ -33529,6 +33537,25 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         const vis = Math.max(120, Math.round(rawH * sc) + 3);
         wrap.style.height = `${vis}px`;
         wrap.style.maxHeight = `${vis}px`;
+      } catch (e) {}
+    };
+    // Getippter Text ohne Bild/Handschrift: größte Schrift (16–64px) wählen, bei der der Text noch in die Karte passt.
+    const _psAutoFitText = d => {
+      try {
+        d.querySelectorAll('div[data-pdf-textarea][data-ps-pdf-fit="1"]').forEach(el => {
+          let lo = 16, hi = 64, best = 16;
+          while (lo <= hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            el.style.setProperty('font-size', mid + 'px', 'important');
+            if (el.scrollHeight <= el.clientHeight + 1) {
+              best = mid;
+              lo = mid + 1;
+            } else {
+              hi = mid - 1;
+            }
+          }
+          el.style.setProperty('font-size', best + 'px', 'important');
+        });
       } catch (e) {}
     };
     let _costVisH = 0;
@@ -34106,6 +34133,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
             // ---- Kostenblock-Höhe im echten Render-Layout nachmessen (Letzte Seite) ----
             try {
               _psFitCostBlock(clonedDoc);
+            } catch (e) {}
+            try {
+              _psAutoFitText(clonedDoc);
             } catch (e) {}
 
             // ---- Leere letzte Seite entfernen (falls irgendwo ein Spacer entsteht) ----
@@ -37167,7 +37197,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.41"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.42"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
