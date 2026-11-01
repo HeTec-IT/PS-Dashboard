@@ -31875,9 +31875,12 @@ function App() {
           const cw = maxX - minX, ch = maxY - minY;
           if (same && rbw && cw > 20 && ch > 20) {
             const PADX = 28, PADY = 22;
-            const fitS = Math.min((targetW - 2 * PADX) / cw, (targetH - 2 * PADY) / ch);
+            // Linker Rand wie auf dem Tablet geschrieben (nicht ganz links kleben): mind. 48px, max. 12 % der Kartenbreite
+            const baseUni = Math.min(targetW / rbw, targetH / rbh);
+            const indent = Math.max(48, Math.min(minX * baseUni, targetW * 0.12));
+            const fitS = Math.min((targetW - indent - PADX) / cw, (targetH - 2 * PADY) / ch);
             const s = Math.min(2.0, fitS);
-            if (s > 0.2) _fit = { s: s, ox: PADX - minX * s, oy: PADY - minY * s, bw: rbw, bh: rbh };
+            if (s > 0.2) _fit = { s: s, ox: indent - minX * s, oy: PADY - minY * s, bw: rbw, bh: rbh };
           }
         } catch (e) { _fit = null; }
       }
@@ -33163,7 +33166,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         ta.style.textAlign = 'left';
         ta.style.verticalAlign = 'top';
         ta.style.lineHeight = '1.5';
-        ta.style.padding = '22px 26px';
+        ta.style.padding = '24px 40px 22px 64px';
         ta.style.overflow = 'hidden';
         ta.style.zIndex = '20';
         // PDF: getippter Text groß + kräftig, damit er in der Angebotskarte nicht "verloren" wirkt.
@@ -37197,7 +37200,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.42"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.43"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
