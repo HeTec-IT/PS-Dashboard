@@ -19065,7 +19065,7 @@ const ArchivProtokollView = () => {
         ok++;
         r.value.forEach(d => {
           const x = d.data();
-          if (x && x.fileName && (x.ts || 0) >= since) map.set(d.id, x);
+          if (x && x.fileName && x.src === 'app' && String(x.uid || '') === uid && (x.ts || 0) >= since) map.set(d.id, x);
         });
       });
       if (!ok && shops.length) error = 'Archiv-Protokoll konnte nicht geladen werden (Verbindung oder Berechtigung).';
@@ -19079,7 +19079,7 @@ const ArchivProtokollView = () => {
       queued = psIdxQueueGet().filter(x => String(x.uid || '') === uid && (x.ts || 0) >= since && !ids.has(psIdxId(x.fileName)));
     } catch (e) {}
     try {
-      parked = (await listParkedArchive() || []).filter(x => (x.ts || 0) >= since);
+      parked = (await listParkedArchive() || []).filter(x => (x.ts || 0) >= since && String(x.uid || '') === uid);
     } catch (e) {}
     // Ablage in SharePoint pruefen (nur fuer noch nicht bestaetigte Dateien)
     const okMap = psArchOkGet();
@@ -23006,7 +23006,7 @@ function openParkDB() {
 async function parkArchiveEntry(entry) {
   // entry: { id, ts, type, agent, datum, kunde, pdfBlob }
   try {
-    entry = { ...entry, appBrand: 'o2' };
+    entry = { uid: String(window.__PS_USER_UID || ''), ...entry, appBrand: 'o2' };
     const db = await openParkDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(PARK_STORE, 'readwrite');
