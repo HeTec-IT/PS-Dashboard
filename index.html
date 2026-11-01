@@ -33464,6 +33464,35 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     outroContentWrap.style.cssText = ['width:100%', 'height:210mm', 'max-height:210mm', 'display:flex', 'flex-direction:column', 'gap:6px', 'box-sizing:border-box', 'overflow:hidden', 'padding:6px 6px 4px 6px', 'background:#f8fafc'].join(';');
 
     // ── Kostenübersicht oben – scale(0.76) für kompakten Fit ──
+    // Passt die Kostenblock-Hoehe an das ECHTE Layout an. Wird im html2canvas-Klon (onclone) aufgerufen:
+    // dort gelten Viewport 1122x794 (Querformat), vh-Einheiten und Media-Queries wie im fertigen PDF.
+    // (Die Messung im 6500px hohen Offscreen-Iframe ist wegen vh/Hochformat zu gross.)
+    const _psFitCostBlock = d => {
+      try {
+        const wrap = d.querySelector('[data-ps-costwrap]');
+        const cl = wrap && wrap.querySelector('[data-ps-costclone]');
+        if (!wrap || !cl) return;
+        const AVAIL = 794 - 10 - 6 - 250; // Seitenhöhe − Padding − Gap − Mindesthöhe Danke & Bonus
+        let sc = 0.76; // immer von Standard-Skalierung starten (Probe-Wert kann durch falschen Viewport zu klein sein)
+        const apply = x => {
+          cl.style.transform = `scale(${x})`;
+          cl.style.width = `${Math.round(100 / x)}%`;
+        };
+        apply(sc);
+        let rawH = cl.offsetHeight || 0;
+        if (!rawH) return;
+        for (let i = 0; i < 3; i++) {
+          const need = Math.round(rawH * sc) + 3;
+          if (need <= AVAIL || sc <= 0.56) break;
+          sc = Math.max(0.56, Math.round(sc * (AVAIL / need) * 100) / 100);
+          apply(sc);
+          rawH = cl.offsetHeight || rawH;
+        }
+        const vis = Math.max(120, Math.round(rawH * sc) + 3);
+        wrap.style.height = `${vis}px`;
+        wrap.style.maxHeight = `${vis}px`;
+      } catch (e) {}
+    };
     let _costVisH = 0;
     if (costBlock) {
       let COST_SCALE = 0.76;
@@ -33471,6 +33500,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       // Feste Höhe = skalierter Inhalt; overflow:hidden schneidet nichts ab
       costWrap.style.cssText = ['flex:0 0 auto', 'background:#ffffff', 'border-radius:10px', 'border:1.5px solid #e2e8f0', 'padding:0', 'box-sizing:border-box', 'overflow:hidden', 'position:relative'].join(';');
       const costClone = costBlock.cloneNode(true);
+      costClone.setAttribute('data-ps-costclone', '1');
+      costWrap.setAttribute('data-ps-costwrap', '1');
       // Breite kompensiert scale-Verkleinerung damit keine Lücken entstehen
       costClone.style.cssText = ['display:block', 'margin:0', `transform:scale(${COST_SCALE})`, 'transform-origin:top left', `width:${Math.round(100 / COST_SCALE)}%`, 'padding:8px 14px 4px 14px', 'box-sizing:border-box'].join(';');
       costClone.querySelectorAll('button:not([data-print-keep="1"])').forEach(b => b.style.display = 'none');
@@ -33509,6 +33540,14 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         probe.style.cssText = `position:absolute;left:-99999px;top:0;width:${_MEASURE_W}px;visibility:hidden;pointer-events:none;`;
         probe.appendChild(costWrap);
         doc.body.appendChild(probe);
+        // Viewport wie beim Render (Querformat) statt 6500px hoch → vh/Hochformat-CSS verfälschen sonst die Höhe
+        let _ifrOld = null;
+        try {
+          if (typeof iframe !== 'undefined' && iframe && iframe.style) {
+            _ifrOld = iframe.style.height;
+            iframe.style.height = (typeof SHARE_PAGE_HEIGHT_PX !== 'undefined' ? SHARE_PAGE_HEIGHT_PX : 794) + 'px';
+          }
+        } catch (e) {}
         let h = 0;
         try {
           // offsetHeight = echte Boxhöhe (scrollHeight zählt überstehende/unsichtbare Elemente mit → viel zu hoch)
@@ -33516,6 +33555,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         } catch (e) {}
         probe.removeChild(costWrap);
         doc.body.removeChild(probe);
+        try {
+          if (_ifrOld !== null) iframe.style.height = _ifrOld;
+        } catch (e) {}
         return h;
       };
       const _applyScale = sc => {
@@ -33534,6 +33576,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       }
       const _visH = Math.max(120, Math.round(_rawH * COST_SCALE) + 3);
       _costVisH = _visH;
+      costWrap.setAttribute('data-ps-scale', String(COST_SCALE));
       costWrap.style.height = `${_visH}px`;
       costWrap.style.maxHeight = `${_visH}px`;
       outroContentWrap.appendChild(costWrap);
@@ -34008,6 +34051,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
             // ===== Share/PDF: Top-Header Cleanup (falls vorhanden) =====
             try {
               clonedDoc.querySelectorAll('.print-page-header:not(.share-page-header)').forEach(el => el.remove());
+            } catch (e) {}
+
+            // ---- Kostenblock-Höhe im echten Render-Layout nachmessen (Letzte Seite) ----
+            try {
+              _psFitCostBlock(clonedDoc);
             } catch (e) {}
 
             // ---- Leere letzte Seite entfernen (falls irgendwo ein Spacer entsteht) ----
