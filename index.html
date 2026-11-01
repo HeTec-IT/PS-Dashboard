@@ -31854,6 +31854,33 @@ function App() {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       const isOfferKey = (key || '').startsWith('offer');
+      // PDF-Angebotsseite: Handschrift auf die Kartengröße einpassen (oben-links), damit sie
+      // nicht klein und "verloren" in der großen Karte steht. Nur wenn alle Striche dieselbe Basisgröße haben.
+      let _fit = null;
+      if (isOfferKey) {
+        try {
+          let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9, rbw = 0, rbh = 0, same = true;
+          strokes.forEach(st => {
+            if (!st || !Array.isArray(st.points) || st.points.length === 0) return;
+            const sbw = st.baseWidth || targetW, sbh = st.baseHeight || targetH;
+            if (!rbw) { rbw = sbw; rbh = sbh; } else if (Math.abs(sbw - rbw) > 1 || Math.abs(sbh - rbh) > 1) same = false;
+            if (st.tool === 'eraser') return;
+            st.points.forEach(pt => {
+              if (pt.x < minX) minX = pt.x;
+              if (pt.y < minY) minY = pt.y;
+              if (pt.x > maxX) maxX = pt.x;
+              if (pt.y > maxY) maxY = pt.y;
+            });
+          });
+          const cw = maxX - minX, ch = maxY - minY;
+          if (same && rbw && cw > 20 && ch > 20) {
+            const PADX = 28, PADY = 22;
+            const fitS = Math.min((targetW - 2 * PADX) / cw, (targetH - 2 * PADY) / ch);
+            const s = Math.min(2.0, fitS);
+            if (s > 0.2) _fit = { s: s, ox: PADX - minX * s, oy: PADY - minY * s, bw: rbw, bh: rbh };
+          }
+        } catch (e) { _fit = null; }
+      }
       strokes.forEach(stroke => {
         if (!stroke || !Array.isArray(stroke.points) || stroke.points.length === 0) return;
         const bw = stroke.baseWidth || targetW;
@@ -31868,13 +31895,14 @@ function App() {
         // Zentrierung: wenn uni < sx oder uni < sy, bleibt ein Rand → mittig verschieben
         // Oben-links verankern (wie auf dem Tablet) – NICHT zentrieren, sonst wirkt die
         // Handschrift im PDF verschoben/mittig.
-        const offsetX = 0;
-        const offsetY = 0;
-        const useX = uni;
-        const useY = uni;
+        const _f = _fit && Math.abs(bw - _fit.bw) < 1 && Math.abs(bh - _fit.bh) < 1 ? _fit : null;
+        const offsetX = _f ? _f.ox : 0;
+        const offsetY = _f ? _f.oy : 0;
+        const useX = _f ? _f.s : uni;
+        const useY = _f ? _f.s : uni;
         const visualBase = Math.max(1, Math.min(12, stroke.width || 3));
         const geo = Math.sqrt(Math.max(0.01, sx) * Math.max(0.01, sy));
-        const lw = visualBase * Math.min(1.05, Math.max(0.5, geo));
+        const lw = _f ? visualBase * Math.min(1.7, Math.max(0.5, _f.s)) : visualBase * Math.min(1.05, Math.max(0.5, geo));
         ctx.beginPath();
         if (stroke.tool === 'eraser') {
           ctx.lineWidth = lw * (stroke.eraserMult || 4);
@@ -37132,7 +37160,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.39"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.40"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
