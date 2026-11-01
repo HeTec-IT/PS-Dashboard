@@ -32595,6 +32595,12 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       contentWrap.className = 'share-page-content';
       // Inhalt darf nie "in die nächste Seite laufen"
       contentWrap.style.cssText = includeHeader ? 'flex:1 1 auto;min-height:0;height:calc(210mm - 52px);overflow:hidden;box-sizing:border-box;display:flex;flex-direction:row;' : 'flex:1 1 auto;min-height:0;height:210mm;overflow:hidden;box-sizing:border-box;display:flex;flex-direction:row;';
+      if (!includeHeader) {
+        // Ohne Header: volle 210mm. Die globale Regel `.share-page-content{height:calc(210mm - 52px)!important}`
+        // schnitt Cover/Danke-Seite sonst unten um 52px ab (heller Streifen, Inhalt "hinter dem Container").
+        contentWrap.style.setProperty('height', '210mm', 'important');
+        contentWrap.style.setProperty('max-height', '210mm', 'important');
+      }
       contentWrap.appendChild(contentEl);
       page.appendChild(contentWrap);
       return page;
@@ -33736,6 +33742,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         logging: false,
         onclone: function (clonedDoc) {
           try {
+            try {
+              _psFitCostBlock(clonedDoc);
+            } catch (e) {}
             // FIX: Textareas durch Divs ersetzen, damit html2canvas den Inhalt korrekt umbricht
             // (html2canvas rendert textarea.value nicht korrekt – Text erscheint in einer Zeile)
             try {
@@ -37117,7 +37126,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       marginLeft: '-8px',
       marginRight: '2px'
     }
-  }, "v55.37"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, "v55.38"), LINK_EMPLOYEE && !PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowMyStats(true),
     className: "p-2 text-slate-400 hover:text-emerald-600 rounded-full hover:bg-emerald-50 transition-colors",
     title: "Meine Statistik – Qualität & Vorgänge ansehen"
