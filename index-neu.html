@@ -13,16 +13,20 @@
       var s = String(v || '').trim().toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
       return (s === 'sha' || s === 'schwaebischhall' || s === 'hall') ? 'schwaebisch-hall' : s;
     };
+    var via = ''; try { via = sessionStorage.getItem('ps_neu_weiche') || ''; } catch (e) {}
+    var shop = ''; var mq = /[?&](?:shop|filiale)=([^&#]*)/.exec(location.search || ''); if (mq) { try { shop = norm(decodeURIComponent(mq[1])); } catch (e) {} } if (!shop) { try { shop = norm(localStorage.getItem('ps_shop')); } catch (e) {} }
+    var geklickt = false; /* Nutzer hat schon bedient -> nicht mehr mitten im Start zurueckspringen */
+    var merk = function () { geklickt = true; };
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { try { window.addEventListener(ev, merk, true); } catch (e) {} });
+    var zurueck = function () { var q = location.search || ''; location.replace('./' + (q ? q + '&alt=1' : '?alt=1') + (location.hash || '')); };
+    /* Liste schon bekannt und Shop nicht freigegeben -> sofort zurueck (ohne die grosse App erst zu laden) */
+    var liste = null; try { var c = JSON.parse(localStorage.getItem('ps_rollout') || 'null'); if (Array.isArray(c)) liste = c; } catch (e) {}
+    if (via && shop && liste && liste.indexOf(shop) === -1) { zurueck(); return; }
     fetch('rollout.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       if (!j || !Array.isArray(j.neu)) return;
       var neu = j.neu.map(norm).filter(Boolean);
       try { localStorage.setItem('ps_rollout', JSON.stringify(neu)); } catch (e) {}
-      var via = ''; try { via = sessionStorage.getItem('ps_neu_weiche') || ''; } catch (e) {}
-      var shop = ''; var mq = /[?&](?:shop|filiale)=([^&#]*)/.exec(location.search || ''); if (mq) { try { shop = norm(decodeURIComponent(mq[1])); } catch (e) {} } if (!shop) { try { shop = norm(localStorage.getItem('ps_shop')); } catch (e) {} }
-      if (via && shop && neu.indexOf(shop) === -1 && window.performance && performance.now() < 4000) {
-        var q = location.search || '';
-        location.replace('./' + (q ? q + '&alt=1' : '?alt=1') + (location.hash || ''));
-      }
+      if (via && shop && neu.indexOf(shop) === -1 && !geklickt && window.performance && performance.now() < 20000) zurueck();
     }).catch(function () {});
   } catch (e) {}
 })();

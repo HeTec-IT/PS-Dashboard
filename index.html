@@ -12,6 +12,7 @@
   try {
     var q = location.search || '';
     if (/[?&](alt|dl)=/.test(q)) return;
+    if (/index-neu\.html$/.test(location.pathname)) return; /* nie auf sich selbst umleiten (z. B. Offline-Fallback) */
     var norm = function (v) {
       var s = String(v || '').trim().toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
       return (s === 'sha' || s === 'schwaebischhall' || s === 'hall') ? 'schwaebisch-hall' : s;
@@ -24,7 +25,7 @@
     var weiter = function () {
       var t = 0;
       try { t = Number(sessionStorage.getItem('ps_neu_weiche') || 0); } catch (e) {}
-      if (t && Date.now() - t < 20000) return false; /* Schleifenschutz */
+      if (t && Date.now() - t < 3000) return false; /* Schleifenschutz (nur gegen Endlosschleifen, nicht gegen Hin-und-her-Wechsel) */
       try { sessionStorage.setItem('ps_neu_weiche', String(Date.now())); } catch (e) {}
       location.replace('index-neu.html' + q + (location.hash || ''));
       return true;
