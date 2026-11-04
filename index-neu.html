@@ -18,7 +18,7 @@
       var neu = j.neu.map(norm).filter(Boolean);
       try { localStorage.setItem('ps_rollout', JSON.stringify(neu)); } catch (e) {}
       var via = ''; try { via = sessionStorage.getItem('ps_neu_weiche') || ''; } catch (e) {}
-      var shop = ''; try { shop = norm(localStorage.getItem('ps_shop')); } catch (e) {}
+      var shop = ''; var mq = /[?&](?:shop|filiale)=([^&#]*)/.exec(location.search || ''); if (mq) { try { shop = norm(decodeURIComponent(mq[1])); } catch (e) {} } if (!shop) { try { shop = norm(localStorage.getItem('ps_shop')); } catch (e) {} }
       if (via && shop && neu.indexOf(shop) === -1 && window.performance && performance.now() < 4000) {
         var q = location.search || '';
         location.replace('./' + (q ? q + '&alt=1' : '?alt=1') + (location.hash || ''));
