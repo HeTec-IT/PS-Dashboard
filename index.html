@@ -5,6 +5,43 @@
     <script>try { localStorage.removeItem('ps_autosave_v1'); } catch (_) {}</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+/* Rollout-Weiche: Shops aus rollout.json ("neu") bekommen index-neu.html, alle anderen die bisherige App.
+   Jeder Fehler -> bisherige App bleibt. Notausgang: ?alt=1 erzwingt die bisherige App. QR-Download (?dl=) bleibt unberuehrt. */
+(function () {
+  try {
+    var q = location.search || '';
+    if (/[?&](alt|dl)=/.test(q)) return;
+    var norm = function (v) {
+      var s = String(v || '').trim().toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      return (s === 'sha' || s === 'schwaebischhall' || s === 'hall') ? 'schwaebisch-hall' : s;
+    };
+    var shop = '';
+    var m = /[?&](?:shop|filiale)=([^&#]*)/.exec(q);
+    if (m) { try { shop = norm(decodeURIComponent(m[1])); } catch (e) {} }
+    if (!shop) { try { shop = norm(localStorage.getItem('ps_shop')); } catch (e) {} }
+    if (!shop) return;
+    var weiter = function () {
+      var t = 0;
+      try { t = Number(sessionStorage.getItem('ps_neu_weiche') || 0); } catch (e) {}
+      if (t && Date.now() - t < 20000) return false; /* Schleifenschutz */
+      try { sessionStorage.setItem('ps_neu_weiche', String(Date.now())); } catch (e) {}
+      location.replace('index-neu.html' + q + (location.hash || ''));
+      return true;
+    };
+    var liste = [];
+    try { var c = JSON.parse(localStorage.getItem('ps_rollout') || '[]'); if (Array.isArray(c)) liste = c; } catch (e) {}
+    if (liste.indexOf(shop) !== -1 && weiter()) return;
+    /* Liste im Hintergrund aktualisieren (gilt ab dem naechsten Start); frisch gestartet und freigegeben -> sofort wechseln */
+    fetch('rollout.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || !Array.isArray(j.neu)) return;
+      var neu = j.neu.map(norm).filter(Boolean);
+      try { localStorage.setItem('ps_rollout', JSON.stringify(neu)); } catch (e) {}
+      if (neu.indexOf(shop) !== -1 && window.performance && performance.now() < 4000) weiter();
+    }).catch(function () {});
+  } catch (e) {}
+})();
+</script>
 <script>/* Kunden-Download (QR) */
 (function () {
   try {
