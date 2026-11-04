@@ -37351,6 +37351,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       try {
         const u = new URL(window.location.href);
         u.searchParams.set('shop', neu);
+        u.searchParams.delete('alt'); // Notausgang ?alt=1 nicht in den neuen Shop mitnehmen
         window.__psIntentionalReload = true;
         window.location.replace(u.toString());
       } catch (_) {
