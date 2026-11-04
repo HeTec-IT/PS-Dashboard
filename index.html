@@ -29,6 +29,9 @@
       location.replace('index-neu.html' + q + (location.hash || ''));
       return true;
     };
+    var geklickt = false; /* Nutzer hat schon bedient -> nicht mehr mitten im Start umschalten */
+    var merk = function () { geklickt = true; };
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { try { window.addEventListener(ev, merk, true); } catch (e) {} });
     var liste = [];
     try { var c = JSON.parse(localStorage.getItem('ps_rollout') || '[]'); if (Array.isArray(c)) liste = c; } catch (e) {}
     if (liste.indexOf(shop) !== -1 && weiter()) return;
@@ -37,7 +40,7 @@
       if (!j || !Array.isArray(j.neu)) return;
       var neu = j.neu.map(norm).filter(Boolean);
       try { localStorage.setItem('ps_rollout', JSON.stringify(neu)); } catch (e) {}
-      if (neu.indexOf(shop) !== -1 && window.performance && performance.now() < 4000) weiter();
+      if (neu.indexOf(shop) !== -1 && !geklickt && window.performance && performance.now() < 20000) weiter();
     }).catch(function () {});
   } catch (e) {}
 })();
