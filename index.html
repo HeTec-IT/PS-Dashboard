@@ -1107,7 +1107,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.38';
+    window.APP_VERSION = '55.39';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -23937,6 +23937,7 @@ const psArchErr = (code, fb) => {
 const psArchErrText = e => {
   const c = e && e.code || '';
   if (c === 'network') return e && e.fb === 'fetch' ? 'Keine Verbindung zum PDF-Dienst. Bitte Internetverbindung prüfen und erneut versuchen. Bleibt es so, bitte den Administrator informieren (Flow-Adresse/Signatur).' : 'Keine Verbindung. Bitte Internetverbindung prüfen und erneut versuchen.';
+  if (c === 'permission-denied') return 'Der Suchindex verweigert das Schreiben (Firestore-Regeln für „pdf_index“ prüfen).';
   if (c === 'timeout') return 'Das dauert zu lange. Bitte erneut versuchen.';
   if (c === 'auth') return 'Anmeldung ungültig oder abgelaufen. Bitte die App neu öffnen bzw. erneut anmelden.';
   if (c === 'forbidden') return 'Dafür fehlt die Berechtigung (Standort oder Zugang).';
@@ -24305,10 +24306,11 @@ const psArchCall = async (url, payload, timeoutMs) => {
     if (r.status === 401) throw psArchErr('auth');
     if (r.status === 403) throw psArchErr('forbidden');
     if (r.status === 404) throw psArchErr('notfound');
-    if (!r.ok) throw psArchErr('server');
+    if (!r.ok) throw psArchErr('server', String(r.status));
     if (!j || j.ok !== true) {
       const c = j && j.error;
-      throw psArchErr(c === 'auth' || c === 'forbidden' || c === 'notfound' ? c : 'server');
+      const known = c === 'auth' || c === 'forbidden' || c === 'notfound';
+      throw psArchErr(known ? c : 'server', known ? '' : String(c || 'flow').replace(/[^\w .:-]/g, '').slice(0, 40));
     }
     return j;
   } finally {
@@ -24642,11 +24644,32 @@ const psArchImport = async (cfg, onProgress, opts) => {
   if (!cfg.isAdmin) throw psArchErr('forbidden'); // nur Komfort: den Admin-Zugriff entscheidet der Flow
   const db = psIdxDb();
   if (!db) throw psArchErr('server');
-  let after = Math.max(0, Number(opts && opts.afterId) || 0), seen = 0, neu = 0, uebersprungen = 0, pages = 0;
-  let cursor = after, done = false;
+  let after = Math.max(0, Number(opts && opts.afterId) || 0), seen = 0, neu = 0, uebersprungen = 0, pages = 0, fehler = 0;
+  let cursor = after, done = false, errCode = '', lastErr = null, lim = 500, flowFails = 0;
+  // v55.38: Fehlertolerant. Ein einzelner Fehler bricht den Import nicht mehr ab:
+  //  - Flow überlastet / Zeitüberschreitung → kleinere Seiten, Pause, bis zu 4 Wiederholungen
+  //  - Firestore lehnt einen Eintrag ab → Stapel wird einzeln geschrieben, alle übrigen kommen durch
+  //  - Fehlercode wird gemerkt und angezeigt (fehler = Anzahl nicht geschriebener Einträge)
+  const noteErr = e => {
+    lastErr = e;
+    if (!errCode) errCode = String(e && e.code || e && e.message || 'unbekannt').slice(0, 40);
+  };
   for (;;) {
     if (psArchOffline()) throw psArchErr('network');
-    const res = await psArchRequest(cfg, { action: 'list', afterId: after, limit: 500 }, 90000);
+    let res;
+    try {
+      res = await psArchRequest(cfg, { action: 'list', afterId: after, limit: lim }, 90000);
+      flowFails = 0;
+    } catch (e) {
+      const c = e && e.code;
+      if ((c === 'server' || c === 'timeout') && flowFails < 4) {
+        flowFails++;
+        lim = Math.max(50, Math.floor(lim / 2));
+        await new Promise(r => setTimeout(r, 1500 * flowFails));
+        continue;
+      }
+      throw e;
+    }
     const items = Array.isArray(res.items) ? res.items : [];
     const entries = [];
     items.forEach(it => {
@@ -24657,32 +24680,55 @@ const psArchImport = async (cfg, onProgress, opts) => {
     for (let i = 0; i < entries.length; i += 100) {
       const chunk = entries.slice(i, i + 100);
       const refs = chunk.map(e => db.collection(PS_IDX_COLL).doc(psIdxId(e.fileName)));
-      const docs = await Promise.all(refs.map(r => r.get()));
-      const batch = db.batch();
-      let n = 0;
+      let docs;
+      try {
+        docs = await Promise.all(refs.map(r => r.get()));
+      } catch (e) {
+        fehler += chunk.length;
+        noteErr(e);
+        continue;
+      }
+      const todo = [];
       chunk.forEach((e, j) => {
-        if (!docs[j].exists) {
-          batch.set(refs[j], e);
-          n++;
-        }
+        if (!docs[j].exists) todo.push({ ref: refs[j], e });
       });
-      if (n) await batch.commit();
-      neu += n;
+      if (todo.length) {
+        try {
+          const batch = db.batch();
+          todo.forEach(t => batch.set(t.ref, t.e));
+          await batch.commit();
+          neu += todo.length;
+        } catch (e1) {
+          noteErr(e1);
+          for (const t of todo) {
+            try {
+              await t.ref.set(t.e);
+              neu++;
+            } catch (e2) {
+              fehler++;
+              noteErr(e2);
+            }
+          }
+        }
+      }
+      // Es wird gar nichts geschrieben (z. B. Regeln lehnen alles ab): nicht minutenlang weiterprobieren
+      if (neu === 0 && fehler >= 200) throw psIdxErr(lastErr);
     }
     seen += items.length;
     pages++;
     try {
-      onProgress && onProgress({ seen, neu, uebersprungen, pages });
+      onProgress && onProgress({ seen, neu, uebersprungen, pages, fehler });
     } catch (e) {}
     const last = Number(res.lastId) || 0;
     if (last > cursor) cursor = last;
-    if (res.done === true || !last || last <= after || pages >= 400) {
-      done = res.done === true || !last || last <= after; // false = bei 400 Seiten abgebrochen (nicht vollständig)
+    if (res.done === true || !last || last <= after || pages >= 1000) {
+      done = res.done === true || !last || last <= after; // false = bei 1000 Seiten abgebrochen (nicht vollständig)
       break;
     }
     after = last;
   }
-  return { seen, neu, uebersprungen, pages, lastId: cursor, done };
+  // done = vollständig UND ohne Fehler (nur dann wird die Seitenmarke gemerkt)
+  return { seen, neu, uebersprungen, pages, lastId: cursor, done: done && fehler === 0, fehler, errCode };
 };
 
 // v55.12: Automatischer Index-Abgleich im Hintergrund (nur Admin-Geräte) – kein Knopfdruck mehr nötig.
@@ -24725,7 +24771,7 @@ const psArchAutoSync = (cfg, force) => {
       try {
         const r = await psArchImport(cfg, null, { afterId: full ? 0 : st.cursor });
         if (r.done === true) psArchAutoSyncMark(r, full);
-        else psArchAutoSyncWrite({ ...st, next: now + PS_AUTOSYNC_RETRY_MS });
+        else psArchAutoSyncWrite({ ...st, next: now + (r.fehler ? 6 * 3600 * 1000 : PS_AUTOSYNC_RETRY_MS), err: r.fehler ? r.errCode || 'index' : st.err });
         return r;
       } catch (e) {
         psArchAutoSyncWrite({ ...st, next: now + PS_AUTOSYNC_RETRY_MS, err: e && e.code || 'server' });
@@ -25099,12 +25145,12 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
         if (alive.current) setImp({ state: 'run', seen: p.seen, neu: p.neu });
       });
       psArchAutoSyncMark(r, true);
-      if (alive.current) setImp({ state: 'done', seen: r.seen, neu: r.neu, uebersprungen: r.uebersprungen });
+      if (alive.current) setImp({ state: 'done', seen: r.seen, neu: r.neu, uebersprungen: r.uebersprungen, fehler: r.fehler || 0, errCode: r.errCode || '' });
     } catch (e) {
       try {
         console.warn('[KUNDENSUCHE] Import-Fehler:', e && e.code || 'unbekannt');
       } catch (_) {}
-      if (alive.current) setImp({ state: 'err', text: psArchErrText(e) });
+      if (alive.current) setImp({ state: 'err', text: psArchErrText(e), code: (e && e.code || 'unbekannt') + (e && e.fb ? '/' + e.fb : '') + (e && !e.code && e.message ? ' ' + String(e.message).slice(0, 50) : '') });
     }
   };
   const chip = (aktiv, label, onClick) => h('button', {
@@ -25212,7 +25258,7 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
   }, '↻ Aktualisieren')), cards.slice(0, shown).map(kachel), cards.length > shown && h('div', { style: { marginTop: '4px' } }, btn('Weitere anzeigen (' + (cards.length - shown) + ')', () => setShown(s => s + 10), false, false)), limited && h('div', { style: { fontSize: '12px', color: '#92400e', fontWeight: 700, marginTop: '6px' } }, 'Es gibt sehr viele Treffer – bitte Suchbegriff, Dokumenttyp oder Standort eingrenzen.')), h('div', { style: { marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' } }, h('button', {
     onClick: () => setDiagOpen(o => !o),
     style: { border: 'none', background: 'none', color: '#64748b', fontWeight: 800, fontSize: '12px', cursor: 'pointer', padding: '4px 0' }
-  }, (diagOpen ? '▾ ' : '▸ ') + 'Systemprüfung'), diagOpen && h('div', { style: { marginTop: '6px' } }, h('div', { style: { fontSize: '12px', color: '#64748b', lineHeight: 1.45 } }, 'Prüft mit deiner Anmeldung, ob Suche, Berechtigungen und PDF-Abruf wirklich funktionieren.'), h('div', { style: { display: 'flex', marginTop: '8px' } }, btn(diagBusy ? '⏳ Prüfung läuft …' : 'Prüfung starten', pruefen, false, diagBusy)), diag && h('div', { style: { marginTop: '8px' } }, diag.map(schritt)), cfg.isAdmin && (imp || psArchAutoSyncFailed()) && h('div', { style: { marginTop: '14px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '12px', background: '#f8fafc' } }, h('div', { style: { fontSize: '12.5px', fontWeight: 900, color: '#0f172a' } }, 'Archiv-Index (Admin)'), h('div', { style: { fontSize: '12px', color: '#64748b', margin: '4px 0 8px', lineHeight: 1.45 } }, 'Der automatische Abgleich des Suchindex hat zuletzt nicht geklappt. Der Knopf liest alle Dateinamen im Archiv neu ein. Vorhandene Einträge bleiben unverändert, die PDFs werden nicht angefasst.'), h('div', { style: { display: 'flex' } }, btn(imp && imp.state === 'run' ? '⏳ Import läuft …' : 'Archiv-Index aufbauen', importieren, false, !verbunden || !!imp && imp.state === 'run')), imp && imp.state === 'run' && h('div', { style: { fontSize: '12px', color: '#1d4ed8', fontWeight: 700, marginTop: '8px' } }, imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen'), imp && imp.state === 'done' && h('div', { style: { fontSize: '12px', color: '#166534', fontWeight: 700, marginTop: '8px' } }, '✅ Fertig: ' + imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen · ' + imp.uebersprungen + ' ohne Pencil-Namensschema übersprungen'), imp && imp.state === 'err' && h('div', { style: { fontSize: '12px', color: '#991b1b', fontWeight: 700, marginTop: '8px' } }, '❌ Abgebrochen: ' + imp.text + ' Bereits aufgenommene Einträge bleiben erhalten; der Import kann erneut gestartet werden.'))))))), viewer && h(PsArchivPdfViewer, { buf: viewer.buf, name: viewer.name, onClose: () => setViewer(null) }));
+  }, (diagOpen ? '▾ ' : '▸ ') + 'Systemprüfung'), diagOpen && h('div', { style: { marginTop: '6px' } }, h('div', { style: { fontSize: '12px', color: '#64748b', lineHeight: 1.45 } }, 'Prüft mit deiner Anmeldung, ob Suche, Berechtigungen und PDF-Abruf wirklich funktionieren.'), h('div', { style: { display: 'flex', marginTop: '8px' } }, btn(diagBusy ? '⏳ Prüfung läuft …' : 'Prüfung starten', pruefen, false, diagBusy)), diag && h('div', { style: { marginTop: '8px' } }, diag.map(schritt)), cfg.isAdmin && (imp || psArchAutoSyncFailed()) && h('div', { style: { marginTop: '14px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '12px', background: '#f8fafc' } }, h('div', { style: { fontSize: '12.5px', fontWeight: 900, color: '#0f172a' } }, 'Archiv-Index (Admin)'), h('div', { style: { fontSize: '12px', color: '#64748b', margin: '4px 0 8px', lineHeight: 1.45 } }, 'Der automatische Abgleich des Suchindex hat zuletzt nicht geklappt. Der Knopf liest alle Dateinamen im Archiv neu ein. Vorhandene Einträge bleiben unverändert, die PDFs werden nicht angefasst.'), h('div', { style: { display: 'flex' } }, btn(imp && imp.state === 'run' ? '⏳ Import läuft …' : 'Archiv-Index aufbauen', importieren, false, !verbunden || !!imp && imp.state === 'run')), imp && imp.state === 'run' && h('div', { style: { fontSize: '12px', color: '#1d4ed8', fontWeight: 700, marginTop: '8px' } }, imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen'), imp && imp.state === 'done' && h('div', { style: { fontSize: '12px', color: '#166534', fontWeight: 700, marginTop: '8px' } }, '✅ Fertig: ' + imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen · ' + imp.uebersprungen + ' ohne Pencil-Namensschema übersprungen' + (imp.fehler ? ' · ⚠️ ' + imp.fehler + ' nicht geschrieben [Code: ' + imp.errCode + ']' : '')), imp && imp.state === 'err' && h('div', { style: { fontSize: '12px', color: '#991b1b', fontWeight: 700, marginTop: '8px' } }, '❌ Abgebrochen: ' + imp.text + (imp.code ? ' [Code: ' + imp.code + ']' : '') + ' Bereits aufgenommene Einträge bleiben erhalten; der Import kann erneut gestartet werden.'))))))), viewer && h(PsArchivPdfViewer, { buf: viewer.buf, name: viewer.name, onClose: () => setViewer(null) }));
 };
 
 // ── v51.4: PDF finalisieren – Angebots-PDF hochladen, Kunde unterschreibt, geht als ABSCHLUSS ins Archiv ──
