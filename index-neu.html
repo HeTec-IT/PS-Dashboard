@@ -35352,6 +35352,7 @@ function App() {
     } catch (err) {}
     const neu = psParseEuro((packagePrices[offerKey] || {}).einmalig) + PS_EMP_ANZAHLUNG;
     setPackagePriceField(offerKey, 'einmalig', neu.toFixed(2).replace('.', ','));
+    try { trackToolUsage('hardwareGoogle'); } catch (e) {}
     triggerToast(text + ' in Angebot ' + offerKey.slice(-1) + ' übernommen · Anzahlung ' + psEmpGeld(PS_EMP_ANZAHLUNG) + ' bei Einmalig');
   };
   // TV-Empfehlung -> Angebot: Paket als Text, Monatspreis zu "Monatlich" addiert
@@ -35365,6 +35366,7 @@ function App() {
     } catch (err) {}
     const neu = psParseEuro((packagePrices[offerKey] || {}).monatlich) + preis;
     setPackagePriceField(offerKey, 'monatlich', neu.toFixed(2).replace('.', ','));
+    try { trackToolUsage('tvVorschlag'); } catch (e) {}
     triggerToast(text + ' in Angebot ' + offerKey.slice(-1) + ' übernommen · ' + psEmpGeld(preis) + ' bei Monatlich');
   };
   const psTvChips = sitChipsParse(textData);
