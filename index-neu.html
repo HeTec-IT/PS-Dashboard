@@ -1126,7 +1126,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.146';
+    window.APP_VERSION = '55.147';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -27315,6 +27315,24 @@ const psIdxFlush = async timeoutMs => {
   }
 };
 
+// v55.38: Schlägt das Schreiben des Suchindex-Eintrags direkt nach dem Archivieren fehl (Netz langsam/weg),
+// wird automatisch erneut versucht: nach 4 s, 15 s, 45 s, 2 Min., danach alle 5 Min. (max. 12 Versuche je Sitzung).
+let __psIdxRetryTimer = null, __psIdxRetryN = 0;
+const psIdxRetryLater = () => {
+  try {
+    if (__psIdxRetryTimer || __psIdxRetryN >= 12 || !psIdxQueueGet().length) return;
+    const wait = [4000, 15000, 45000, 120000, 300000][Math.min(__psIdxRetryN, 4)];
+    __psIdxRetryTimer = setTimeout(async () => {
+      __psIdxRetryTimer = null;
+      __psIdxRetryN++;
+      try {
+        await psIdxFlush(8000);
+      } catch (e) {}
+      if (psIdxQueueGet().length) psIdxRetryLater();else __psIdxRetryN = 0;
+    }, wait);
+  } catch (e) {}
+};
+
 // Kontext vom Archivier-Ablauf (Kundenname, Rufnummer, verknüpftes Angebot) – gilt nur für genau diesen Dateinamen
 const psIdxCtxSet = ctx => {
   try {
@@ -27357,6 +27375,7 @@ const psIdxRecordArchive = async (dateiname, betreff) => {
     q.push(entry);
     psIdxQueueSet(q); // erst sichern, dann schreiben: übersteht auch ein sofortiges Neuladen der Seite
     const n = await psIdxFlush(2500);
+    if (!(n > 0)) psIdxRetryLater(); // sofort nicht geschrieben → automatisch weiter versuchen
     return n > 0;
   } catch (e) {
     return false;
@@ -27894,9 +27913,9 @@ const psArchImport = async (cfg, onProgress, opts) => {
 // einmal pro Woche ein vollständiger Durchlauf. Harmlos wiederholbar (vorhandene Einträge bleiben). Läuft unsichtbar; nur bei Fehlern
 // erscheint in der Systemprüfung des Admins ein Hinweis mit Knopf.
 const PS_AUTOSYNC_KEY = 'ps_arch_autosync_v1';
-const PS_AUTOSYNC_EVERY_MS = 20 * 3600 * 1000; // ca. 1x am Tag
+const PS_AUTOSYNC_EVERY_MS = 4 * 3600 * 1000; // ca. alle 4 Std. (nur neue Dateien ab Seitenmarke)
 const PS_AUTOSYNC_FULL_MS = 7 * 86400000;
-const PS_AUTOSYNC_RETRY_MS = 30 * 60 * 1000;
+const PS_AUTOSYNC_RETRY_MS = 10 * 60 * 1000;
 let __psArchAutoSyncing = null;
 const psArchAutoSyncRead = () => {
   try {
@@ -28012,15 +28031,30 @@ try {
     }, 15000);
   }
 } catch (e) {}
-// v55.12: Automatischer Index-Abgleich beim Start (greift nur auf Admin-Geräten; die Konfiguration kommt von archivCfg)
+// v55.38: Automatischer Index-Abgleich – robust. Kein einmaliger Start-Versuch mehr (der ging verloren, wenn Login/Admin-Profil
+// nach 25 s noch nicht da waren): Die Prüfung läuft solange die App offen ist jede Minute, beim Zurückkehren in die App und
+// sobald das Netz zurück ist. psArchAutoSync drosselt selbst (ca. alle 4 Std.; 10 Min. nach Fehler); greift nur auf Admin-Geräten.
+// Gleichzeitig werden wartende Suchindex-Einträge (z. B. nach Netzausfall beim Archivieren) nachgetragen.
 try {
   if (typeof window !== 'undefined' && !window.__psArchAutoStartHook) {
     window.__psArchAutoStartHook = true;
-    setTimeout(() => {
+    const psAutoTick = () => {
       try {
-        if (typeof window.__psArchCfgGetter === 'function') psArchAutoSync(window.__psArchCfgGetter());
+        if (psIdxQueueGet().length) psIdxFlush(6000);
+        const cfg = typeof window.__psArchCfgGetter === 'function' ? window.__psArchCfgGetter() : null;
+        if (cfg && cfg.url && cfg.isAdmin && window.__PS_USER_UID) psArchAutoSync(cfg);
       } catch (e) {}
-    }, 25000);
+    };
+    setTimeout(psAutoTick, 8000);
+    setInterval(psAutoTick, 60 * 1000);
+    try {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') setTimeout(psAutoTick, 1500);
+      });
+      window.addEventListener('online', () => {
+        setTimeout(psAutoTick, 3000);
+      });
+    } catch (e) {}
   }
 } catch (e) {}
 
@@ -28132,7 +28166,9 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
   const shopName = id => (shops.find(s => s.id === id) || {}).name || id;
   React.useEffect(() => {
     alive.current = true;
-    psIdxFlush(); // ggf. wartende Index-Einträge nachtragen
+    psIdxFlush().then(n => {
+      if (alive.current && n > 0) setTick(x => x + 1); // frisch nachgetragene Einträge → Suche aktualisieren
+    }); // ggf. wartende Index-Einträge nachtragen
     if (verbunden) psArchStatus(cfg).then(r => {
       if (alive.current) setAb(r);
     });
