@@ -1126,7 +1126,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.149';
+    window.APP_VERSION = '55.150';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -27195,6 +27195,21 @@ const psIdxDb = () => {
 };
 // Dokument-ID = Dateiname (klein, nur sichere Zeichen) → gleiche Datei = gleiches Dokument, nie doppelt
 const psIdxId = fileName => String(fileName || '').toLowerCase().replace(/[^a-z0-9._+\-]/g, '_').slice(0, 180);
+// v55.41: Sicherheitsnetz der Mitarbeiter-Suche. Liefert die Suche über den Suchschlüssel nichts (oder geht nicht, z. B. fehlender
+// Datenbank-Index), werden ALLE Einträge des eigenen Standorts geholt (nur Gleichheitsfilter auf shopId, gleiche Berechtigung wie
+// die Systemprüfung) und hier im Gerät gefiltert. 60 s zwischengespeichert, wird nach jedem neuen Eintrag geleert.
+const PS_IDX_ALL_LIM = 2000;
+const __psIdxShopCache = new Map();
+const psIdxShopAll = async (db, shop) => {
+  const key = String(window.__PS_USER_UID || '') + '|' + shop;
+  const c = __psIdxShopCache.get(key);
+  if (c && Date.now() - c.ts < 60000) return c.docs;
+  const snap = await db.collection(PS_IDX_COLL).where('shopId', '==', shop).limit(PS_IDX_ALL_LIM).get();
+  const docs = [];
+  snap.forEach(d => docs.push(d));
+  __psIdxShopCache.set(key, { ts: Date.now(), docs });
+  return docs;
+};
 
 // Suchschlüssel: Namensanfänge (3–12 Zeichen je Wort) und Rufnummern-Anfänge (ab 7 Stellen)
 const psIdxKeys = (kunde, nsn) => {
@@ -27298,7 +27313,14 @@ const psIdxFlush = async timeoutMs => {
           await psIdxWriteOne(db, entry, timeoutMs || 6000);
           psIdxQueueSet(psIdxQueueGet().filter(x => psIdxId(x && x.fileName) !== psIdxId(entry.fileName)));
           written++;
+          try {
+            __psIdxShopCache.clear();
+            localStorage.removeItem('ps_idx_lasterr');
+          } catch (_) {}
         } catch (e) {
+          try {
+            localStorage.setItem('ps_idx_lasterr', JSON.stringify({ c: String(e && e.code || e && e.message || 'unbekannt').slice(0, 40), ts: Date.now() }));
+          } catch (_) {}
           if (e && e.code === 'permission-denied') {
             try { console.warn('[SUCHINDEX] Schreiben abgelehnt (Firestore-Regeln?)'); } catch (_) {}
             continue; // dieser Eintrag bleibt gespeichert, die übrigen werden weiter versucht
@@ -27426,6 +27448,28 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
   };
   const snaps = [];
   let denied = 0, failed = 0;
+  const info = [];
+  let extraLimited = false;
+  // Je Standort: erst die schnelle Suche über den Suchschlüssel; ohne Treffer / bei Fehler (außer "verweigert") alle Einträge des Standorts prüfen
+  const fetchShop = async shop => {
+    let snap = null, err = null;
+    try {
+      snap = await run(shop);
+    } catch (e) {
+      err = e;
+    }
+    if (snap && snap.size > 0) return { snap };
+    if (err && err.code === 'permission-denied') throw err; // Berechtigung wird nie umgangen
+    try {
+      const all = await psIdxShopAll(db, shop);
+      info.push({ s: shop, n: all.length });
+      if (all.length >= PS_IDX_ALL_LIM) extraLimited = true;
+      return { snap: { size: 0, forEach: fn => all.forEach(fn) } };
+    } catch (e2) {
+      if (snap) return { snap };
+      throw e2;
+    }
+  };
   if (shops === null) {
     try {
       snaps.push(await run(''));
@@ -27436,16 +27480,16 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
     }
   }
   if (shops !== null) {
-    const rs = await Promise.allSettled(shops.map(run));
+    const rs = await Promise.allSettled(shops.map(fetchShop));
     rs.forEach(r => {
-      if (r.status === 'fulfilled') snaps.push(r.value);
+      if (r.status === 'fulfilled') snaps.push(r.value.snap);
       else if (r.reason && r.reason.code === 'permission-denied') denied++;
       else failed++;
     });
     if (!snaps.length && shops.length) throw psIdxErr({ code: denied ? 'permission-denied' : 'unavailable' });
   }
   const byId = new Map();
-  let limited = false;
+  let limited = extraLimited;
   snaps.forEach(s => {
     if (s.size >= LIM) limited = true;
     s.forEach(d => {
@@ -27460,7 +27504,7 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
     }
     return (b.ts || 0) - (a.ts || 0);
   });
-  return { items, pq, limited };
+  return { items, pq, limited, info };
 };
 
 // Angebote (Cloud) + PDFs zu Karten zusammenführen. Zuordnung NUR über die gespeicherte Angebots-ID.
@@ -27832,7 +27876,58 @@ const psArchSelfTest = async (cfg, onStep) => {
         push('write', 'Index schreiben / lesen / löschen', 'fail', 'Schreiben abgelehnt – Firestore-Regeln prüfen.');
       }
     } else {
-      push('write', 'Index schreiben', 'skip', 'Nur Admin.');
+      // v55.41: Mitarbeiter-Schreibtest – so wie die App nach dem Archivieren schreibt (eigener Standort, eigene UID, ohne Namen)
+      const id = '_selftest_' + (uid || 'x').slice(0, 12);
+      try {
+        const ref = db.collection(PS_IDX_COLL).doc(id);
+        await ref.set(psIdxBuild({ fileName: id, typ: 'angebot', shopId: window.__PS_SHOP_ORT || allowed[0] || '', kunde: '', datum: new Date().toISOString().slice(0, 10), src: 'app', uid }));
+        let geloescht = true;
+        try {
+          await ref.delete();
+        } catch (e) {
+          geloescht = false;
+        }
+        push('write', 'Index schreiben (wie nach dem Archivieren)', 'ok', 'Eintrag für den eigenen Standort geschrieben' + (geloescht ? ' und wieder gelöscht.' : '.'));
+      } catch (e) {
+        push('write', 'Index schreiben (wie nach dem Archivieren)', 'fail', 'Schreiben abgelehnt (' + (e && e.code || 'Fehler') + '): Neue Archivierungen kommen erst nach dem Admin-Abgleich in die Suche. Firestore-Regeln: Anlegen für den eigenen Standort erlauben.');
+      }
+    }
+  }
+  // v55.41: Wartende Index-Einträge (Archivierungen, die noch nicht im Suchindex stehen) – wird dabei gleich erneut versucht
+  if (db) {
+    try {
+      await psIdxFlush(8000);
+    } catch (e) {}
+    const q = psIdxQueueGet().length;
+    let le = null;
+    try {
+      le = JSON.parse(localStorage.getItem('ps_idx_lasterr') || 'null');
+    } catch (e) {}
+    if (!q) push('queue', 'Wartende Index-Einträge', 'ok', 'Keine – alle Archivierungen auf diesem Gerät sind im Suchindex.');
+    else push('queue', 'Wartende Index-Einträge', 'fail', q + ' Archivierung(en) noch nicht im Suchindex' + (le && le.c ? ' (letzter Fehler: ' + le.c + ')' : '') + '.');
+    // Admin: Verteilung der Einträge je Standort – zeigt falsch oder gar nicht zugeordnete Einträge
+    if (cfg.isAdmin) {
+      try {
+        const snap = await db.collection(PS_IDX_COLL).limit(6000).get();
+        const cnt = {};
+        let total = 0;
+        snap.forEach(d => {
+          const x = d.data() || {};
+          if (!x.fileName || /^_selftest_/.test(x.fileName)) return;
+          total++;
+          const k = String(x.shopId || '');
+          cnt[k] = (cnt[k] || 0) + 1;
+        });
+        const known = Object.keys(cnt).filter(k => k && allShopIds.indexOf(k) !== -1).sort();
+        const unknown = Object.keys(cnt).filter(k => k && allShopIds.indexOf(k) === -1).sort();
+        const missing = allShopIds.filter(id => !cnt[id]);
+        const parts = known.map(k => k + ' ' + cnt[k]);
+        if (cnt['']) parts.push('ohne Standort ' + cnt['']);
+        unknown.forEach(k => parts.push('UNBEKANNT „' + k + '“ ' + cnt[k]));
+        push('dist', 'Einträge je Standort (' + total + ')', unknown.length || missing.length ? 'fail' : 'ok', parts.join(' · ') + (missing.length ? ' · OHNE Einträge: ' + missing.join(', ') : ''));
+      } catch (e) {
+        push('dist', 'Einträge je Standort', 'fail', 'Konnte nicht gelesen werden (' + (e && e.code || 'Fehler') + ').');
+      }
     }
   }
   // Gespeicherte Angebote (30 Tage)
@@ -28208,6 +28303,7 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
   const [archErr, setArchErr] = React.useState('');
   const [offErr, setOffErr] = React.useState('');
   const [limited, setLimited] = React.useState(false);
+  const [idxInfo, setIdxInfo] = React.useState([]);
   const [shown, setShown] = React.useState(10);
   const [err, setErr] = React.useState('');
   const [busyId, setBusyId] = React.useState('');
@@ -28280,6 +28376,7 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
       }
       setCards(psArchGroup(cl, arch));
       setLimited(!aRej && !!a.value.limited);
+      setIdxInfo(aRej ? [] : a.value.info || []);
       setArchErr(aRej ? 'PDF-Archiv: ' + psArchErrText(a.reason) : '');
       setOffErr(cRej ? 'Gespeicherte Angebote: ' + psArchErrText(c.reason) : '');
       setShown(10);
@@ -28489,7 +28586,7 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
     value: shop,
     onChange: e => setShop(e.target.value),
     style: { width: '100%', padding: '13px 12px', borderRadius: '12px', border: '2px solid #e2e8f0', background: '#fff', fontSize: '15px', fontWeight: 700, color: '#334155' }
-  }, h('option', { value: '' }, 'Alle berechtigten Standorte'), shops.map(s => h('option', { key: s.id, value: s.id }, s.name))) : h('div', { style: { fontSize: '14px', fontWeight: 800, color: '#334155', padding: '4px 2px' } }, shops[0] ? shops[0].name : '–'), status === 'hint' && box('#eff6ff', '#bfdbfe', '#1d4ed8', hint), status === 'busy' && box('#eff6ff', '#bfdbfe', '#1d4ed8', '⏳ Suche …'), status === 'fehler' && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, err, errCode ? h('div', { style: { fontSize: '11px', fontWeight: 600, opacity: 0.7, marginTop: '4px' } }, 'Code: ' + errCode) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), status === 'leer' && box('#fffbeb', '#fde68a', '#92400e', h('div', null, 'Kein passendes Pencil-Selling-Dokument gefunden. Bitte Suchbegriff oder Standort überprüfen.', cfg.isAdmin ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, 'Ältere PDFs erscheinen erst nach dem Index-Import (unten: Systemprüfung).') : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut suchen', neuSuchen, false, false)))), fileErr && box('#fef2f2', '#fecaca', '#991b1b', fileErr), status === 'ok' && h('div', { style: { marginTop: '14px' } }, archErr && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, archErr, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), offErr && box('#fef2f2', '#fecaca', '#991b1b', offErr), h('div', { style: { fontSize: '12px', fontWeight: 900, color: '#64748b', margin: '12px 0 8px', display: 'flex', justifyContent: 'space-between' } }, h('span', null, cards.length + ' Treffer · neueste zuerst'), h('button', {
+  }, h('option', { value: '' }, 'Alle berechtigten Standorte'), shops.map(s => h('option', { key: s.id, value: s.id }, s.name))) : h('div', { style: { fontSize: '14px', fontWeight: 800, color: '#334155', padding: '4px 2px' } }, shops[0] ? shops[0].name : '–'), status === 'hint' && box('#eff6ff', '#bfdbfe', '#1d4ed8', hint), status === 'busy' && box('#eff6ff', '#bfdbfe', '#1d4ed8', '⏳ Suche …'), status === 'fehler' && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, err, errCode ? h('div', { style: { fontSize: '11px', fontWeight: 600, opacity: 0.7, marginTop: '4px' } }, 'Code: ' + errCode) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), status === 'leer' && box('#fffbeb', '#fde68a', '#92400e', h('div', null, 'Kein passendes Pencil-Selling-Dokument gefunden. Bitte Suchbegriff oder Standort überprüfen.', cfg.isAdmin ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, 'Ältere PDFs erscheinen erst nach dem Index-Import (unten: Systemprüfung).') : null, idxInfo.length ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, idxInfo.map(x => shopName(x.s) + ': ' + (x.n ? x.n + ' Einträge im Suchindex durchsucht' : 'Der Suchindex für diesen Standort ist leer – bitte Administrator informieren')).join(' · ')) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut suchen', neuSuchen, false, false)))), fileErr && box('#fef2f2', '#fecaca', '#991b1b', fileErr), status === 'ok' && h('div', { style: { marginTop: '14px' } }, archErr && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, archErr, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), offErr && box('#fef2f2', '#fecaca', '#991b1b', offErr), h('div', { style: { fontSize: '12px', fontWeight: 900, color: '#64748b', margin: '12px 0 8px', display: 'flex', justifyContent: 'space-between' } }, h('span', null, cards.length + ' Treffer · neueste zuerst'), h('button', {
     onClick: neuSuchen,
     style: { border: 'none', background: 'none', color: '#2563eb', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }
   }, '↻ Aktualisieren')), cards.slice(0, shown).map(kachel), cards.length > shown && h('div', { style: { marginTop: '4px' } }, btn('Weitere anzeigen (' + (cards.length - shown) + ')', () => setShown(s => s + 10), false, false)), limited && h('div', { style: { fontSize: '12px', color: '#92400e', fontWeight: 700, marginTop: '6px' } }, 'Es gibt sehr viele Treffer – bitte Suchbegriff, Dokumenttyp oder Standort eingrenzen.')), h('div', { style: { marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' } }, h('button', {
