@@ -1107,7 +1107,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.42';
+    window.APP_VERSION = '55.43';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -24239,7 +24239,15 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
     if (err && err.code === 'permission-denied') throw err; // Berechtigung wird nie umgangen
     try {
       const all = await psIdxShopAll(db, shop);
-      info.push({ s: shop, n: all.length });
+      // Selbsttest-Einträge zählen nicht; neuestes Datum zeigt, ob der Suchindex des Standorts aktuell ist
+      let cnt = 0, newest = '';
+      all.forEach(d => {
+        const x = d.data() || {};
+        if (/^_selftest_/.test(String(x.fileName || ''))) return;
+        cnt++;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(x.datum || '')) && x.datum > newest) newest = x.datum;
+      });
+      info.push({ s: shop, n: cnt, d: newest });
       if (all.length >= PS_IDX_ALL_LIM) extraLimited = true;
       return { snap: { size: 0, forEach: fn => all.forEach(fn) } };
     } catch (e2) {
@@ -25371,7 +25379,7 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
     value: shop,
     onChange: e => setShop(e.target.value),
     style: { width: '100%', padding: '13px 12px', borderRadius: '12px', border: '2px solid #e2e8f0', background: '#fff', fontSize: '15px', fontWeight: 700, color: '#334155' }
-  }, h('option', { value: '' }, 'Alle berechtigten Standorte'), shops.map(s => h('option', { key: s.id, value: s.id }, s.name))) : h('div', { style: { fontSize: '14px', fontWeight: 800, color: '#334155', padding: '4px 2px' } }, shops[0] ? shops[0].name : '–'), status === 'hint' && box('#eff6ff', '#bfdbfe', '#1d4ed8', hint), status === 'busy' && box('#eff6ff', '#bfdbfe', '#1d4ed8', '⏳ Suche …'), status === 'fehler' && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, err, errCode ? h('div', { style: { fontSize: '11px', fontWeight: 600, opacity: 0.7, marginTop: '4px' } }, 'Code: ' + errCode) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), status === 'leer' && box('#fffbeb', '#fde68a', '#92400e', h('div', null, 'Kein passendes Pencil-Selling-Dokument gefunden. Bitte Suchbegriff oder Standort überprüfen.', cfg.isAdmin ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, 'Ältere PDFs erscheinen erst nach dem Index-Import (unten: Systemprüfung).') : null, idxInfo.length ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, idxInfo.map(x => shopName(x.s) + ': ' + (x.n ? x.n + ' Einträge im Suchindex durchsucht' : 'Der Suchindex für diesen Standort ist leer – bitte Administrator informieren')).join(' · ')) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut suchen', neuSuchen, false, false)))), fileErr && box('#fef2f2', '#fecaca', '#991b1b', fileErr), status === 'ok' && h('div', { style: { marginTop: '14px' } }, archErr && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, archErr, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), offErr && box('#fef2f2', '#fecaca', '#991b1b', offErr), h('div', { style: { fontSize: '12px', fontWeight: 900, color: '#64748b', margin: '12px 0 8px', display: 'flex', justifyContent: 'space-between' } }, h('span', null, cards.length + ' Treffer · neueste zuerst'), h('button', {
+  }, h('option', { value: '' }, 'Alle berechtigten Standorte'), shops.map(s => h('option', { key: s.id, value: s.id }, s.name))) : h('div', { style: { fontSize: '14px', fontWeight: 800, color: '#334155', padding: '4px 2px' } }, shops[0] ? shops[0].name : '–'), status === 'hint' && box('#eff6ff', '#bfdbfe', '#1d4ed8', hint), status === 'busy' && box('#eff6ff', '#bfdbfe', '#1d4ed8', '⏳ Suche …'), status === 'fehler' && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, err, errCode ? h('div', { style: { fontSize: '11px', fontWeight: 600, opacity: 0.7, marginTop: '4px' } }, 'Code: ' + errCode) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), status === 'leer' && box('#fffbeb', '#fde68a', '#92400e', h('div', null, 'Kein passendes Pencil-Selling-Dokument gefunden. Bitte Suchbegriff oder Standort überprüfen.', cfg.isAdmin ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, 'Ältere PDFs erscheinen erst nach dem Index-Import (unten: Systemprüfung).') : null, idxInfo.length ? h('div', { style: { fontWeight: 600, fontSize: '12px', marginTop: '6px' } }, idxInfo.map(x => shopName(x.s) + ': ' + (x.n ? x.n + ' Einträge im Suchindex durchsucht' + (x.d ? ' (neuester vom ' + x.d.split('-').reverse().join('.') + ')' : '') : 'Der Suchindex für diesen Standort ist leer – bitte Administrator informieren')).join(' · ')) : null, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut suchen', neuSuchen, false, false)))), fileErr && box('#fef2f2', '#fecaca', '#991b1b', fileErr), status === 'ok' && h('div', { style: { marginTop: '14px' } }, archErr && box('#fef2f2', '#fecaca', '#991b1b', h('div', null, archErr, h('div', { style: { marginTop: '8px' } }, btn('↻ Erneut versuchen', neuSuchen, false, false)))), offErr && box('#fef2f2', '#fecaca', '#991b1b', offErr), h('div', { style: { fontSize: '12px', fontWeight: 900, color: '#64748b', margin: '12px 0 8px', display: 'flex', justifyContent: 'space-between' } }, h('span', null, cards.length + ' Treffer · neueste zuerst'), h('button', {
     onClick: neuSuchen,
     style: { border: 'none', background: 'none', color: '#2563eb', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }
   }, '↻ Aktualisieren')), cards.slice(0, shown).map(kachel), cards.length > shown && h('div', { style: { marginTop: '4px' } }, btn('Weitere anzeigen (' + (cards.length - shown) + ')', () => setShown(s => s + 10), false, false)), limited && h('div', { style: { fontSize: '12px', color: '#92400e', fontWeight: 700, marginTop: '6px' } }, 'Es gibt sehr viele Treffer – bitte Suchbegriff, Dokumenttyp oder Standort eingrenzen.')), h('div', { style: { marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' } }, h('button', {
