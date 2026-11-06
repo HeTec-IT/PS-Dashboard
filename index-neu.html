@@ -1126,7 +1126,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.150';
+    window.APP_VERSION = '55.151';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -27962,7 +27962,7 @@ const psArchImport = async (cfg, onProgress, opts) => {
   if (!cfg.isAdmin) throw psArchErr('forbidden'); // nur Komfort: den Admin-Zugriff entscheidet der Flow
   const db = psIdxDb();
   if (!db) throw psArchErr('server');
-  let after = Math.max(0, Number(opts && opts.afterId) || 0), seen = 0, neu = 0, uebersprungen = 0, pages = 0, fehler = 0;
+  let after = Math.max(0, Number(opts && opts.afterId) || 0), seen = 0, neu = 0, uebersprungen = 0, pages = 0, fehler = 0, fremd = 0;
   let cursor = after, done = false, errCode = '', lastErr = null, lim = 500, flowFails = 0, gekuerzt = 0;
   const bad = []; // abgelehnte Einträge (max. 8) für die Anzeige beim Admin
   // v55.38: Fehlertolerant. Ein einzelner Fehler bricht den Import nicht mehr ab:
@@ -27993,7 +27993,10 @@ const psArchImport = async (cfg, onProgress, opts) => {
     const entries = [];
     items.forEach(it => {
       const e = it && it.name ? psIdxFromFile(it.name, it.modified, cfg.allShopIds) : null;
-      if (e) entries.push({ ...e, uid: window.__PS_USER_UID || '' });
+      // v55.42: Der Standort im Dateinamen gehört zu keinem Standort dieser App (z. B. Telekom-Dateien im o2-Archiv): ohne Standort
+      // lässt der Server den Eintrag ohnehin nicht zu und kein Mitarbeiter könnte ihn finden – also überspringen, kein Fehler.
+      if (e && !e.shopId && /^PENCIL_(?:.*_)?[^_]+_(?:Angebot|Abschluss)_\d{4}-\d{2}-\d{2}/i.test(String(it.name))) fremd++;
+      else if (e) entries.push({ ...e, uid: window.__PS_USER_UID || '' });
       else uebersprungen++;
     });
     for (let i = 0; i < entries.length; i += 100) {
@@ -28034,6 +28037,11 @@ const psArchImport = async (cfg, onProgress, opts) => {
                   ok = true;
                 } catch (e3) {}
               }
+              // Ohne Standort lässt der Server den Eintrag nicht zu (und kein Mitarbeiter könnte ihn finden): kein Fehler
+              if (!ok && !t.e.shopId && e2 && e2.code === 'permission-denied') {
+                fremd++;
+                ok = true;
+              }
               if (!ok) {
                 fehler++;
                 noteErr(e2);
@@ -28060,7 +28068,7 @@ const psArchImport = async (cfg, onProgress, opts) => {
     after = last;
   }
   // done = vollständig UND ohne Fehler (nur dann wird die Seitenmarke gemerkt)
-  return { seen, neu, uebersprungen, pages, lastId: cursor, done: done && fehler === 0, fehler, errCode, bad, gekuerzt };
+  return { seen, neu, uebersprungen, pages, lastId: cursor, done: done && fehler === 0, fehler, errCode, bad, gekuerzt, fremd };
 };
 
 // v55.12: Automatischer Index-Abgleich im Hintergrund (nur Admin-Geräte) – kein Knopfdruck mehr nötig.
@@ -28479,7 +28487,7 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
         if (alive.current) setImp({ state: 'run', seen: p.seen, neu: p.neu });
       });
       psArchAutoSyncMark(r, true);
-      if (alive.current) setImp({ state: 'done', seen: r.seen, neu: r.neu, uebersprungen: r.uebersprungen, fehler: r.fehler || 0, errCode: r.errCode || '', bad: r.bad || [], gekuerzt: r.gekuerzt || 0 });
+      if (alive.current) setImp({ state: 'done', seen: r.seen, neu: r.neu, uebersprungen: r.uebersprungen, fehler: r.fehler || 0, errCode: r.errCode || '', bad: r.bad || [], gekuerzt: r.gekuerzt || 0, fremd: r.fremd || 0 });
     } catch (e) {
       try {
         console.warn('[KUNDENSUCHE] Import-Fehler:', e && e.code || 'unbekannt');
@@ -28592,7 +28600,7 @@ const PsArchivSucheModal = ({ cfg, shops, cloudShop, onLoadCloud, onRestore, onC
   }, '↻ Aktualisieren')), cards.slice(0, shown).map(kachel), cards.length > shown && h('div', { style: { marginTop: '4px' } }, btn('Weitere anzeigen (' + (cards.length - shown) + ')', () => setShown(s => s + 10), false, false)), limited && h('div', { style: { fontSize: '12px', color: '#92400e', fontWeight: 700, marginTop: '6px' } }, 'Es gibt sehr viele Treffer – bitte Suchbegriff, Dokumenttyp oder Standort eingrenzen.')), h('div', { style: { marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' } }, h('button', {
     onClick: () => setDiagOpen(o => !o),
     style: { border: 'none', background: 'none', color: '#64748b', fontWeight: 800, fontSize: '12px', cursor: 'pointer', padding: '4px 0' }
-  }, (diagOpen ? '▾ ' : '▸ ') + 'Systemprüfung'), diagOpen && h('div', { style: { marginTop: '6px' } }, h('div', { style: { fontSize: '12px', color: '#64748b', lineHeight: 1.45 } }, 'Prüft mit deiner Anmeldung, ob Suche, Berechtigungen und PDF-Abruf wirklich funktionieren.'), h('div', { style: { display: 'flex', marginTop: '8px' } }, btn(diagBusy ? '⏳ Prüfung läuft …' : 'Prüfung starten', pruefen, false, diagBusy)), diag && h('div', { style: { marginTop: '8px' } }, diag.map(schritt)), cfg.isAdmin && (imp || psArchAutoSyncFailed()) && h('div', { style: { marginTop: '14px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '12px', background: '#f8fafc' } }, h('div', { style: { fontSize: '12.5px', fontWeight: 900, color: '#0f172a' } }, 'Archiv-Index (Admin)'), h('div', { style: { fontSize: '12px', color: '#64748b', margin: '4px 0 8px', lineHeight: 1.45 } }, 'Der automatische Abgleich des Suchindex hat zuletzt nicht geklappt. Der Knopf liest alle Dateinamen im Archiv neu ein. Vorhandene Einträge bleiben unverändert, die PDFs werden nicht angefasst.'), h('div', { style: { display: 'flex' } }, btn(imp && imp.state === 'run' ? '⏳ Import läuft …' : 'Archiv-Index aufbauen', importieren, false, !verbunden || !!imp && imp.state === 'run')), imp && imp.state === 'run' && h('div', { style: { fontSize: '12px', color: '#1d4ed8', fontWeight: 700, marginTop: '8px' } }, imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen'), imp && imp.state === 'done' && h('div', { style: { fontSize: '12px', color: '#166534', fontWeight: 700, marginTop: '8px' } }, '✅ Fertig: ' + imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen · ' + imp.uebersprungen + ' ohne Pencil-Namensschema übersprungen' + (imp.fehler ? ' · ⚠️ ' + imp.fehler + ' nicht geschrieben [Code: ' + imp.errCode + ']' : '') + (imp.gekuerzt ? ' · ' + imp.gekuerzt + ' mit gekürzten Suchschlüsseln' : '')), imp && imp.state === 'done' && imp.bad && imp.bad.length > 0 && h('div', { style: { fontSize: '11px', color: '#92400e', fontWeight: 600, marginTop: '8px', lineHeight: 1.5, wordBreak: 'break-all', whiteSpace: 'pre-wrap' } }, 'Nicht geschrieben:\n' + imp.bad.map(b => b.f + ' · Standort=' + (b.s || '–') + ' · ' + b.t + ' · Schlüssel=' + b.k).join('\n')), imp && imp.state === 'err' && h('div', { style: { fontSize: '12px', color: '#991b1b', fontWeight: 700, marginTop: '8px' } }, '❌ Abgebrochen: ' + imp.text + (imp.code ? ' [Code: ' + imp.code + ']' : '') + ' Bereits aufgenommene Einträge bleiben erhalten; der Import kann erneut gestartet werden.'))))))), viewer && h(PsArchivPdfViewer, { buf: viewer.buf, name: viewer.name, onClose: () => setViewer(null) }));
+  }, (diagOpen ? '▾ ' : '▸ ') + 'Systemprüfung'), diagOpen && h('div', { style: { marginTop: '6px' } }, h('div', { style: { fontSize: '12px', color: '#64748b', lineHeight: 1.45 } }, 'Prüft mit deiner Anmeldung, ob Suche, Berechtigungen und PDF-Abruf wirklich funktionieren.'), h('div', { style: { display: 'flex', marginTop: '8px' } }, btn(diagBusy ? '⏳ Prüfung läuft …' : 'Prüfung starten', pruefen, false, diagBusy)), diag && h('div', { style: { marginTop: '8px' } }, diag.map(schritt)), cfg.isAdmin && (imp || psArchAutoSyncFailed()) && h('div', { style: { marginTop: '14px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '12px', background: '#f8fafc' } }, h('div', { style: { fontSize: '12.5px', fontWeight: 900, color: '#0f172a' } }, 'Archiv-Index (Admin)'), h('div', { style: { fontSize: '12px', color: '#64748b', margin: '4px 0 8px', lineHeight: 1.45 } }, 'Der automatische Abgleich des Suchindex hat zuletzt nicht geklappt. Der Knopf liest alle Dateinamen im Archiv neu ein. Vorhandene Einträge bleiben unverändert, die PDFs werden nicht angefasst.'), h('div', { style: { display: 'flex' } }, btn(imp && imp.state === 'run' ? '⏳ Import läuft …' : 'Archiv-Index aufbauen', importieren, false, !verbunden || !!imp && imp.state === 'run')), imp && imp.state === 'run' && h('div', { style: { fontSize: '12px', color: '#1d4ed8', fontWeight: 700, marginTop: '8px' } }, imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen'), imp && imp.state === 'done' && h('div', { style: { fontSize: '12px', color: '#166534', fontWeight: 700, marginTop: '8px' } }, '✅ Fertig: ' + imp.seen + ' Dateien geprüft · ' + imp.neu + ' neu aufgenommen · ' + imp.uebersprungen + ' ohne Pencil-Namensschema übersprungen' + (imp.fremd ? ' · ' + imp.fremd + ' mit fremdem Standort übersprungen' : '') + (imp.fehler ? ' · ⚠️ ' + imp.fehler + ' nicht geschrieben [Code: ' + imp.errCode + ']' : '') + (imp.gekuerzt ? ' · ' + imp.gekuerzt + ' mit gekürzten Suchschlüsseln' : '')), imp && imp.state === 'done' && imp.bad && imp.bad.length > 0 && h('div', { style: { fontSize: '11px', color: '#92400e', fontWeight: 600, marginTop: '8px', lineHeight: 1.5, wordBreak: 'break-all', whiteSpace: 'pre-wrap' } }, 'Nicht geschrieben:\n' + imp.bad.map(b => b.f + ' · Standort=' + (b.s || '–') + ' · ' + b.t + ' · Schlüssel=' + b.k).join('\n')), imp && imp.state === 'err' && h('div', { style: { fontSize: '12px', color: '#991b1b', fontWeight: 700, marginTop: '8px' } }, '❌ Abgebrochen: ' + imp.text + (imp.code ? ' [Code: ' + imp.code + ']' : '') + ' Bereits aufgenommene Einträge bleiben erhalten; der Import kann erneut gestartet werden.'))))))), viewer && h(PsArchivPdfViewer, { buf: viewer.buf, name: viewer.name, onClose: () => setViewer(null) }));
 };
 
 // ── v51.4: PDF finalisieren – Angebots-PDF hochladen, Kunde unterschreibt, geht als ABSCHLUSS ins Archiv ──
