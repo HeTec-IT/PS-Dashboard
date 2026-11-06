@@ -1107,7 +1107,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.43';
+    window.APP_VERSION = '55.44';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -24208,7 +24208,8 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
   if (psArchOffline()) throw psArchErr('network');
   const db = psIdxDb();
   if (!db) throw psArchErr('server');
-  const allowed = cfg.allowedIds || [];
+  // v55.44: Mitarbeiter suchen NUR im Shop, bei dem sie angemeldet sind (scopeShop) – auch wenn ihr Profil weitere Standorte freigibt.
+  const allowed = !cfg.isAdmin && cfg.scopeShop ? [cfg.scopeShop] : cfg.allowedIds || [];
   const allAccess = !!cfg.isAdmin || !!(cfg.allShopIds && cfg.allShopIds.length && allowed.length >= cfg.allShopIds.length);
   let shops; // null = ohne Standort-Einschränkung (Admin / alle Standorte)
   if (opts.shop) {
@@ -26486,10 +26487,11 @@ function App() {
     url: PENCIL_ARCHIV_FLOW_URL,
     allowedIds: PS_GET_ALLOWED_SHOP_IDS(),
     isAdmin: PS_IS_ADMIN(),
+    scopeShop: PS_IS_ADMIN() ? '' : CURRENT_SHOP_ID, // Mitarbeiter: Kundensuche nur im angemeldeten Shop
     allShopIds: Object.keys(SHOPS)
   });
   window.__psArchCfgGetter = archivCfg; // v55.12: für den automatischen Index-Abgleich beim Start
-  const archivShops = () => PS_GET_ALLOWED_SHOP_IDS().map(id => ({
+  const archivShops = () => (PS_IS_ADMIN() ? PS_GET_ALLOWED_SHOP_IDS() : [CURRENT_SHOP_ID]).map(id => ({
     id,
     name: SHOPS[id] && SHOPS[id].name || id
   }));
