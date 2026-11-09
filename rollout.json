@@ -1,4 +1,4 @@
 {
-  "neu": ["schwaebisch-hall"],
-  "hinweis": "Shop-IDs, die index-neu.html bekommen, z. B. [\"schwaebisch-hall\"]. Leer = alle Shops bleiben auf der bisherigen App."
+  "neu": ["aalen", "crailsheim", "schwaebisch-hall", "freilassing", "neuoetting", "rosenheim", "sindelfingen", "stuttgart-vaihingen", "traunreut", "traunstein", "waldkraiburg", "wasserburg"],
+  "hinweis": "Shop-IDs, die index-neu.html bekommen, z. B. [\"schwaebisch-hall\"]. Leer = alle Shops bleiben auf der bisherigen App. Stand 09.11.2026: alle 12 o2-Shops auf der neuen App (Rueckweg: Liste auf [\"schwaebisch-hall\"] kuerzen oder leeren)."
 }
