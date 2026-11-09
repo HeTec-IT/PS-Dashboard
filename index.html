@@ -1100,7 +1100,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.159';
+    window.APP_VERSION = '55.160';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -38901,10 +38901,13 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
           if (_pm > 0 || _pe > 0) {
             const pb = doc.createElement('div');
             pb.setAttribute('data-ps-preisangebot', '1');
-            pb.style.cssText = 'position:relative;margin-top:16px;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,0.14);border:1px solid rgba(255,255,255,0.38);';
-            let ph = '<div style="font-size:10px;letter-spacing:0.16em;font-weight:700;opacity:0.85;">PREISANGEBOT</div>';
-            if (_pm > 0) ph += '<div style="margin-top:4px;font-size:26px;font-weight:800;line-height:1.1;">' + _pf(_pm) + '<span style="font-size:12px;font-weight:600;opacity:0.85;"> / Monat</span></div>';
-            if (_pe > 0) ph += '<div style="margin-top:4px;font-size:12px;font-weight:600;opacity:0.92;">' + (_pm > 0 ? '+ ' : '') + _pf(_pe) + ' einmalig</div>';
+            const _acc = '#1d4ed8';
+            pb.style.cssText = 'position:relative;margin-top:22px;border-radius:16px;overflow:hidden;background:#ffffff;color:#191919;box-shadow:0 10px 26px rgba(0,0,0,0.35);';
+            let ph = '<div style="background:#0b1e42;color:#ffffff;padding:9px 16px;font-size:12px;letter-spacing:0.16em;font-weight:800;">IHR PREISANGEBOT</div>';
+            ph += '<div style="padding:14px 16px 16px;">';
+            if (_pm > 0) ph += '<div style="font-size:46px;font-weight:900;line-height:1.05;letter-spacing:-0.02em;color:' + _acc + ';">' + _pf(_pm) + '</div><div style="font-size:15px;font-weight:700;color:#475569;margin-top:2px;">pro Monat</div>';
+            if (_pe > 0) ph += '<div style="margin-top:' + (_pm > 0 ? '10px;padding-top:10px;border-top:2px dashed #e2e8f0' : '0') + ';font-size:18px;font-weight:800;color:#191919;">' + (_pm > 0 ? '+ ' : '') + _pf(_pe) + ' <span style="font-size:14px;font-weight:700;color:#475569;">einmalig</span></div>';
+            ph += '</div>';
             pb.innerHTML = ph;
             side.appendChild(pb);
           }
