@@ -1100,7 +1100,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.161';
+    window.APP_VERSION = '55.162';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -36415,7 +36415,14 @@ function App() {
       stopDrawing: stopDrawing,
       triggerRedraw: redrawCounter,
       forceKeyboard: type === 'date'
-    })));
+    }), key === 'monatlich2' && inputMode === 'pen' && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "data-ps-noprint": "1",
+      "aria-label": "Taschenrechner",
+      title: "Taschenrechner",
+      onClick: () => { setCalcInput(''); setCalcOpen('m13'); },
+      style: { position: 'absolute', top: '50%', right: '34px', transform: 'translateY(-50%)', zIndex: 30, height: '34px', padding: '0 12px', borderRadius: '10px', border: '1.5px solid #2563eb', background: '#eff6ff', color: '#1d4ed8', fontWeight: 800, fontSize: '13px', cursor: 'pointer' }
+    }, "123")));
   };
   const translateBatch = null; // Statische Labels lokal, getippte Texte via MyMemory (kostenlos)
 
@@ -48851,6 +48858,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         label: 'TV',
         col: '#8b5cf6',
         light: '#f5f3ff'
+      },
+      m13: {
+        label: 'Monatlich ab Monat ' + preisAbSafe,
+        col: '#2563eb',
+        light: '#eff6ff'
       }
     };
     const f = FIELDS[calcOpen];
@@ -48870,6 +48882,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       const normalized = calcInput.replace(',', '.');
       const num = parseFloat(normalized);
       const formatted = !isNaN(num) && num > 0 ? num.toFixed(2).replace('.', ',') : '';
+      if (calcOpen === 'm13') {
+        try { digitalTouchedRef.current['cost_monatlich2'] = true; } catch (e) {}
+        setDrawnStrokes(prev => ({ ...prev, cost_monatlich2: [] }));
+        handleOfferCostChange('monatlich2', formatted);
+      } else
       setCostState(p => ({
         ...p,
         [calcOpen]: formatted
@@ -49009,6 +49026,10 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     }, k)), /*#__PURE__*/React.createElement("button", {
       onClick: () => {
         setCalcInput('');
+        if (calcOpen === 'm13') {
+          setDrawnStrokes(prev => ({ ...prev, cost_monatlich2: [] }));
+          handleOfferCostChange('monatlich2', '');
+        } else
         setCostState(p => ({
           ...p,
           [calcOpen]: ''
