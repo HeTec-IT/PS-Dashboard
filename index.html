@@ -71,6 +71,14 @@
             // Nur auf Touch-Geräten skalieren (Tablets/Phones, nicht Desktop)
             if (!isTouch) return;
 
+            // v55.165: Android-Tablets nicht mehr skalieren. Im Vollbildmodus ignoriert Chrome die Skalierung
+            // ohnehin (Geraetebreite, Zoom 1) -> ohne diese Zeilen startete die App vergroessert (2 Spalten)
+            // und sprang erst im Vollmodus auf die richtige Ansicht (3 Spalten). Jetzt von Anfang an gleich.
+            var uaS = navigator.userAgent || '';
+            var appleDev = /iPhone|iPad|iPod/.test(uaS) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            var desktopOS = /Windows NT|Macintosh|CrOS/i.test(uaS) && !/Android/i.test(uaS);
+            if (!appleDev && !desktopOS) return false;
+
             // Kleinste Seite = Gerätebreite im Portrait
             var shortSide = Math.min(w, h);
             var longSide  = Math.max(w, h);
@@ -1137,7 +1145,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.164';
+    window.APP_VERSION = '55.165';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
