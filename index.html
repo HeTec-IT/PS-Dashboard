@@ -1000,16 +1000,13 @@
         (function resumeFullscreen() {
             var ts = 0;
             try { ts = Number(localStorage.getItem(FS_KEY) || 0); } catch (_) {}
-            // Android-Touchgeraete: auch ohne gemerkten Vollmodus beim ersten Tippen in den Vollmodus.
-            var touchAuto = false;
-            try { touchAuto = !isIOS() && window.matchMedia('(pointer: coarse)').matches; } catch (_) {}
-            if (!ts && !touchAuto) return;
+            if (!ts) return;
             var EVS = ['pointerup', 'touchend', 'click'];
             function done() {
                 EVS.forEach(function (ev) { try { document.removeEventListener(ev, onTap, true); } catch (_) {} });
                 try { localStorage.removeItem(FS_KEY); } catch (_) {}
             }
-            if (isIOS() || (ts && Date.now() - ts > FS_MAX_AGE)) { done(); return; }
+            if (isIOS() || Date.now() - ts > FS_MAX_AGE) { done(); return; }
             var tries = 0;
             function onTap() {
                 // Schon im Vollmodus (z. B. Start ueber das Icon) -> nichts zu tun.
@@ -1040,6 +1037,11 @@
                         window.matchMedia('(pointer: coarse)').matches;
             var desktopOS = /Windows NT|Macintosh|CrOS/i.test(ua) && !/Android/i.test(ua);
             if (!touch || desktopOS) return;
+            // v55.166: Installierte App startet bereits ohne Systemleisten und in der richtigen Ansicht.
+            // Ein zusaetzlicher Vollbild-Aufruf brachte dort nur die Chrome-Meldung "zum Beenden des Vollbildmodus".
+            if (window.matchMedia('(display-mode: standalone)').matches ||
+                window.matchMedia('(display-mode: fullscreen)').matches ||
+                window.matchMedia('(display-mode: minimal-ui)').matches) return;
         } catch (_) { return; }
         var EVS = ['pointerup', 'touchend', 'click'];
         var tries = 0;
@@ -1145,7 +1147,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.165';
+    window.APP_VERSION = '55.166';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
