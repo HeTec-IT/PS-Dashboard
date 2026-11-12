@@ -1019,36 +1019,38 @@
         })();
     })();
     </script>
-    <!-- ===== VOLLBILD AUTO (Browser-Tab auf Android) ===== -->
-    <!-- Im installierten Modus uebernimmt der Block darueber den Vollmodus. Laeuft die App dagegen als normaler
-         Browser-Tab (Chrome/Samsung-Tablet), geht sie beim ersten Tippen automatisch in den Vollmodus. -->
+    <!-- ===== VOLLBILD AUTO (Android-Touch) ===== -->
+    <!-- Beim ersten Tippen echten Vollbildmodus anfordern (Systemleisten weg). Gilt auch, wenn die App als PWA im
+         Manifest-Modus "fullscreen" laeuft: Dort meldet display-mode trotzdem "fullscreen", die Systemleisten bleiben aber.
+         Entscheidend ist nur document.fullscreenElement. Auf dem window registriert, damit kein anderer Handler vorher stoppt. -->
     <script>
     (function () {
+        var ua = navigator.userAgent || '';
         try {
-            var ua = navigator.userAgent || '';
             if (/iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)) return;
-            if (!window.matchMedia('(pointer: coarse)').matches) return;
-            if (window.matchMedia('(display-mode: standalone)').matches ||
-                window.matchMedia('(display-mode: fullscreen)').matches ||
-                window.matchMedia('(display-mode: minimal-ui)').matches) return;
+            var touch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window ||
+                        window.matchMedia('(pointer: coarse)').matches;
+            var desktopOS = /Windows NT|Macintosh|CrOS/i.test(ua) && !/Android/i.test(ua);
+            if (!touch || desktopOS) return;
         } catch (_) { return; }
         var EVS = ['pointerup', 'touchend', 'click'];
         var tries = 0;
+        function isFs() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
         function done() {
-            EVS.forEach(function (ev) { try { document.removeEventListener(ev, onTap, true); } catch (_) {} });
+            EVS.forEach(function (ev) { try { window.removeEventListener(ev, onTap, true); } catch (_) {} });
         }
         function onTap() {
-            if (document.fullscreenElement || document.webkitFullscreenElement) { done(); return; }
+            if (isFs()) { done(); return; }
             var el = document.documentElement, p = null;
             try {
                 if (el.requestFullscreen) p = el.requestFullscreen();
                 else if (el.webkitRequestFullscreen) p = el.webkitRequestFullscreen();
             } catch (_) {}
             tries++;
-            if (p && typeof p.then === 'function') p.then(done, function () { if (tries >= 3) done(); });
+            if (p && typeof p.then === 'function') p.then(done, function () { if (tries >= 6) done(); });
             else done();
         }
-        EVS.forEach(function (ev) { document.addEventListener(ev, onTap, true); });
+        EVS.forEach(function (ev) { window.addEventListener(ev, onTap, true); });
     })();
     </script>
     <!-- ===== DISPLAY AN (Wake Lock) ===== -->
@@ -1135,7 +1137,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.163';
+    window.APP_VERSION = '55.164';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
