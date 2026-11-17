@@ -1147,7 +1147,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.167';
+    window.APP_VERSION = '55.168';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -12030,10 +12030,18 @@ function SitPenPad({ sitKey, strokes, getTool, onStroke }) {
       ctx.globalAlpha = t.opacity * 0.4;
       ctx.globalCompositeOperation = 'destination-over';
     } else {
-      ctx.lineWidth = vw;
-      ctx.strokeStyle = t.color;
-      ctx.globalAlpha = t.opacity;
+      // v55.152: Tinten-Engine wie Haupt-Canvas (Druck, Tempo, Bezier, deckende Tinte)
+      const lw = Math.max(1.8, vw);
+      const ink = psInkStyle(t.color, Math.min(1, (t.opacity == null ? 1 : t.opacity) * 1.35));
+      ctx.strokeStyle = ink.color;
+      ctx.globalAlpha = ink.alpha;
       ctx.globalCompositeOperation = 'source-over';
+      const s = { tool: t.tool, color: t.color, width: t.width, opacity: t.opacity, points: [], baseWidth: r.width, baseHeight: r.height, baseLineWidth: lw, ink: true };
+      psInkAddPoint(s, e.nativeEvent || e, p.x, p.y);
+      psInkDrawLast(ctx, s);
+      drawRef.current = s;
+      try { c.setPointerCapture(e.pointerId); } catch (_) {}
+      return;
     }
     ctx.beginPath();
     ctx.moveTo(p.x, p.y);
@@ -12049,6 +12057,18 @@ function SitPenPad({ sitKey, strokes, getTool, onStroke }) {
     const r = c.getBoundingClientRect();
     const ne = e.nativeEvent;
     const evs = ne && ne.getCoalescedEvents ? ne.getCoalescedEvents() : null;
+    if (s.ink) {
+      (evs && evs.length ? evs : [ne || e]).forEach(ev => {
+        if (psInkAddPoint(s, ev, ev.clientX - r.left, ev.clientY - r.top)) psInkDrawLast(ctx, s);
+      });
+      return;
+    }
+    if (s.tool === 'highlighter') {
+      // v55.158: Keilmarker live über denselben Renderer wie das Endergebnis
+      (evs && evs.length ? evs : [ne || e]).forEach(ev => s.points.push({ x: ev.clientX - r.left, y: ev.clientY - r.top }));
+      try { redrawCanvas(c, (strokesRef.current || []).concat([s]), 1, sitKey); } catch (_) {}
+      return;
+    }
     (evs && evs.length ? evs : [ne || e]).forEach(ev => {
       const p = { x: ev.clientX - r.left, y: ev.clientY - r.top };
       s.points.push(p);
@@ -12062,10 +12082,15 @@ function SitPenPad({ sitKey, strokes, getTool, onStroke }) {
     drawRef.current = null;
     const c = ref.current;
     if (c) {
+      if (s.ink) { try { psInkDrawTail(c.getContext('2d'), s); } catch (_) {} }
       try { c.getContext('2d').restore(); } catch (_) {}
       try { c.releasePointerCapture(e.pointerId); } catch (_) {}
     }
-    if (s.points.length === 1) s.points.push({ x: s.points[0].x + 0.01, y: s.points[0].y });
+    if (s.ink) {
+      delete s.ink;
+      delete s.smoothedPressure; delete s.smoothedVelocity; delete s.lastTime; delete s.lastWf; delete s.rx; delete s.ry; delete s.sx; delete s.sy; delete s.travel;
+    }
+    if (s.points.length === 1) s.points.push(Object.assign({}, s.points[0], { x: s.points[0].x + 0.01 }));
     onStroke(s);
   };
   return h('div', { className: 'sit-pad-wrap' }, h('canvas', {
@@ -12179,6 +12204,251 @@ const INITIAL_QUESTIONS_DATA = {
   'Gesamtkosten': ["Aktuelle Kosten?", "Budget?", "Mehrleistung?", "Zahlungsweise?", "Preisgarantie?"],
   'default': ["Offene Fragen?", "Details?"]
 };
+// === v55.161 PEN-TAP OHNE DOPPELAUSLÖSUNG ===
+// Apple Pencil löst pointerup UND click aus. Beide riefen dieselbe Umschalt-Aktion auf → Fenster öffnete
+// und schloss sich sofort wieder ("Flackern"). Jetzt zählt pro Tipp genau eine Auslösung.
+function psTapHandlers(fn) {
+  return {
+    onClick: e => {
+      if (Date.now() - (window.__psPenTapAt || 0) < 700) return;
+      fn(e);
+    },
+    onPointerUp: e => {
+      if (e.pointerType === 'pen') {
+        e.preventDefault();
+        e.stopPropagation();
+        window.__psPenTapAt = Date.now();
+        fn(e);
+      }
+    }
+  };
+}
+// === v55.158 KEILSPITZE (Textmarker wie echter Marker mit flacher, schräger Spitze) ===
+// Die Spitze ist ein schmales Rechteck (Länge L, Dicke T) im festen Winkel. Jeder Strichabschnitt
+// ist die konvexe Hülle von Spitze@Start und Spitze@Ende; alle Hüllen gleich orientiert und in EINEM
+// Pfad gefüllt (nonzero) → Vereinigung, kein Nachdunkeln an Überlappungen. Waagrechte Züge werden
+// breit, senkrechte schmal – wie bei einem Keilmarker.
+const PS_CHISEL_ANG = 55 * Math.PI / 180;
+function psChiselPath(ctx, pts, lw) {
+  const n = pts ? pts.length : 0;
+  if (!n) return;
+  const L = Math.max(2, lw * 1.15), T = Math.max(1.2, L * 0.26);
+  const ax = Math.cos(PS_CHISEL_ANG) * L / 2, ay = -Math.sin(PS_CHISEL_ANG) * L / 2;
+  const bx = Math.sin(PS_CHISEL_ANG) * T / 2, by = Math.cos(PS_CHISEL_ANG) * T / 2;
+  const cr = p => [[p.x + ax + bx, p.y + ay + by], [p.x + ax - bx, p.y + ay - by], [p.x - ax - bx, p.y - ay - by], [p.x - ax + bx, p.y - ay + by]];
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const hull = P => {
+    P.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const lo = [];
+    for (const p of P) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    const up = [];
+    for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    lo.pop(); up.pop();
+    return lo.concat(up);
+  };
+  const emit = H => {
+    if (H.length < 3) return;
+    ctx.moveTo(H[0][0], H[0][1]);
+    for (let i = 1; i < H.length; i++) ctx.lineTo(H[i][0], H[i][1]);
+    ctx.closePath();
+  };
+  if (n === 1) { emit(hull(cr(pts[0]))); return; }
+  for (let i = 0; i < n - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05 && i > 0) continue;
+    emit(hull(cr(a).concat(cr(b))));
+  }
+}
+// === v55.155 FARBRAD (12 Farbtöne × 5 Helligkeitsstufen) ===
+const PS_WHEEL_HUES = [215, 240, 275, 315, 350, 8, 28, 50, 85, 130, 160, 190];
+const PS_WHEEL_LIGHT = [86, 72, 58, 44, 30];
+function psHslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const x = v => Math.round(v * 255).toString(16).padStart(2, '0');
+  return '#' + x(f(0)) + x(f(8)) + x(f(4));
+}
+function PsColorWheel({ color, onPick }) {
+  const h = React.createElement;
+  const R0 = 34, R1 = 100, ring = (R1 - R0) / PS_WHEEL_LIGHT.length;
+  const pt = (r, deg) => {
+    const a = (deg - 90) * Math.PI / 180;
+    return [(100 + r * Math.cos(a)).toFixed(2), (100 + r * Math.sin(a)).toFixed(2)];
+  };
+  const cells = [];
+  PS_WHEEL_HUES.forEach((hue, i) => {
+    PS_WHEEL_LIGHT.forEach((l, j) => {
+      const hex = psHslToHex(hue, hue >= 45 && hue <= 70 ? 100 : 88, l);
+      const ri = R0 + j * ring, ro = ri + ring, a0 = i * 30, a1 = a0 + 30;
+      const [x0, y0] = pt(ro, a0), [x1, y1] = pt(ro, a1), [x2, y2] = pt(ri, a1), [x3, y3] = pt(ri, a0);
+      cells.push(h('path', {
+        key: i + '-' + j,
+        d: 'M' + x0 + ' ' + y0 + 'A' + ro + ' ' + ro + ' 0 0 1 ' + x1 + ' ' + y1 + 'L' + x2 + ' ' + y2 + 'A' + ri + ' ' + ri + ' 0 0 0 ' + x3 + ' ' + y3 + 'Z',
+        fill: hex,
+        stroke: String(color).toLowerCase() === hex ? '#0f172a' : '#fff',
+        strokeWidth: String(color).toLowerCase() === hex ? 2.2 : 0.8,
+        style: { cursor: 'pointer' },
+        onClick: () => onPick(hex)
+      }));
+    });
+  });
+  const neutrals = [['#000000', 'Schwarz'], ['#374151', 'Bleistift'], ['#9ca3af', 'Grau']];
+  return h('div', { className: 'flex flex-col items-center gap-2' },
+    h('svg', { viewBox: '0 0 200 200', width: 248, height: 248, style: { touchAction: 'manipulation' } }, cells),
+    h('div', { className: 'flex gap-3' }, neutrals.map(([c, n]) => h('button', {
+      key: c,
+      type: 'button',
+      title: n,
+      onClick: () => onPick(c),
+      className: 'w-8 h-8 rounded-full border-2 ' + (String(color).toLowerCase() === c ? 'border-slate-500' : 'border-slate-200'),
+      style: { backgroundColor: c }
+    }))));
+}
+// === v55.156 SAMSUNG-NOTES-WERKZEUGSYMBOLE (zweifarbig, diagonal, Farbe folgt der Stiftfarbe) ===
+function PsToolIcon({ id, color, active, size }) {
+  const h = React.createElement;
+  const ink = '#1f2937', line = '#374151';
+  const defaults = { pen: '#2563eb', fountain: '#b45309', ballpen: '#2563eb', highlighter: '#a78bfa' };
+  const acc = active && color ? color : defaults[id];
+  let g = [];
+  if (id === 'fountain') {
+    g = [
+      h('path', { key: 'n', d: 'M16 2.5 L21 11.5 Q21.5 14.5 19.2 16 H12.8 Q10.5 14.5 11 11.5 Z', fill: '#f8fafc', stroke: line, strokeWidth: 1.3, strokeLinejoin: 'round' }),
+      h('path', { key: 's', d: 'M16 6.5 V11.2', stroke: acc, strokeWidth: 1.4, strokeLinecap: 'round' }),
+      h('circle', { key: 'c', cx: 16, cy: 12.2, r: 1.3, fill: acc }),
+      h('rect', { key: 'r', x: 11, y: 16, width: 10, height: 3, rx: 1, fill: ink }),
+      h('rect', { key: 'b', x: 11, y: 19, width: 10, height: 10, rx: 2.4, fill: acc }),
+      h('rect', { key: 'h', x: 12.6, y: 20.5, width: 1.6, height: 7, rx: 0.8, fill: '#fff', opacity: 0.35 })
+    ];
+  } else if (id === 'pen') {
+    g = [
+      h('path', { key: 't', d: 'M16 2.5 L19.2 9.5 H12.8 Z', fill: '#e5e7eb', stroke: line, strokeWidth: 1.3, strokeLinejoin: 'round' }),
+      h('path', { key: 'i', d: 'M16 2.5 L17.3 5.4 H14.7 Z', fill: acc }),
+      h('rect', { key: 'b', x: 12, y: 9.5, width: 8, height: 19.5, rx: 2.4, fill: '#f8fafc', stroke: line, strokeWidth: 1.3 }),
+      h('rect', { key: 'a', x: 12, y: 17, width: 8, height: 4, fill: acc }),
+      h('rect', { key: 'e', x: 12, y: 25, width: 8, height: 4, rx: 2.4, fill: ink })
+    ];
+  } else if (id === 'ballpen') {
+    g = [
+      h('path', { key: 't', d: 'M16 2.5 L17.6 6.5 H14.4 Z', fill: '#94a3b8', stroke: line, strokeWidth: 1, strokeLinejoin: 'round' }),
+      h('path', { key: 'c', d: 'M14.4 6.5 H17.6 L19 12.5 H13 Z', fill: ink }),
+      h('rect', { key: 'b', x: 13, y: 12.5, width: 6, height: 16.5, rx: 2.2, fill: '#f1f5f9', stroke: line, strokeWidth: 1.3 }),
+      h('rect', { key: 'k', x: 19.6, y: 12.5, width: 1.7, height: 9, rx: 0.85, fill: '#64748b' }),
+      h('rect', { key: 'a', x: 13, y: 21, width: 6, height: 3.2, fill: acc }),
+      h('circle', { key: 'p', cx: 16, cy: 26.6, r: 1, fill: acc })
+    ];
+  } else if (id === 'highlighter') {
+    g = [
+      h('path', { key: 't', d: 'M12.2 11.5 L14.2 3.5 H17.8 L19.8 11.5 Z', fill: acc, opacity: 0.85, stroke: line, strokeWidth: 1.2, strokeLinejoin: 'round' }),
+      h('rect', { key: 'n', x: 11.5, y: 11.5, width: 9, height: 4.5, rx: 1, fill: ink }),
+      h('rect', { key: 'b', x: 10.8, y: 16, width: 10.4, height: 13, rx: 2.6, fill: acc }),
+      h('rect', { key: 'h', x: 12.4, y: 17.5, width: 1.6, height: 9, rx: 0.8, fill: '#fff', opacity: 0.4 })
+    ];
+  } else {
+    // Radierer
+    g = [
+      h('rect', { key: 'b', x: 9, y: 5.5, width: 14, height: 23, rx: 4.2, fill: '#fff' }),
+      h('path', { key: 'p', d: 'M9 17 H23 V24.3 A4.2 4.2 0 0 1 18.8 28.5 H13.2 A4.2 4.2 0 0 1 9 24.3 Z', fill: '#cbd5e1' }),
+      h('rect', { key: 'o', x: 9, y: 5.5, width: 14, height: 23, rx: 4.2, fill: 'none', stroke: line, strokeWidth: 1.4 }),
+      h('path', { key: 'l', d: 'M9 17 H23', stroke: line, strokeWidth: 1.2 })
+    ];
+  }
+  return h('svg', { viewBox: '0 0 32 32', width: size || 28, height: size || 28, 'aria-hidden': true, style: { display: 'block' } },
+    h('g', { transform: 'rotate(-45 16 16)' }, g));
+}
+// === v55.157 WERKZEUG-FENSTER (Samsung-Notes-Stil): Vorschau, Dicke, Deckkraft (Marker), Schnellfarben, Farbrad ===
+function PsToolPreview({ tool, color, width, opacity }) {
+  const h = React.createElement;
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const W = 272, H = 64, d = window.devicePixelRatio || 1;
+    c.width = Math.round(W * d);
+    c.height = Math.round(H * d);
+    const ctx = c.getContext('2d');
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const vw = Math.max(1, Math.min(12, width));
+    const N = 90, raw = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      raw.push({ x: 16 + (W - 32) * t, y: H / 2 + Math.sin(t * Math.PI * 2.4) * H * 0.2 });
+    }
+    const ink = psInkStyle(color, 1);
+    ctx.strokeStyle = ink.color;
+    ctx.fillStyle = ink.color;
+    if (tool === 'highlighter') {
+      ctx.globalAlpha = opacity;
+      ctx.beginPath();
+      psChiselPath(ctx, raw, vw * 3);
+      ctx.fill();
+    } else {
+      const s = { tool, points: [], baseLineWidth: Math.max(1.8, vw) };
+      raw.forEach((p, i) => psInkAddPoint(s, { pointerType: 'pen', pressure: 0.12 + 0.5 * Math.sin(Math.PI * i / N), timeStamp: i * 8, altitudeAngle: 1.2 }, p.x, p.y));
+      drawVariableWidthPath(ctx, s.points, s.points, s.baseLineWidth);
+    }
+    ctx.globalAlpha = 1;
+  }, [tool, color, width, opacity]);
+  return h('canvas', { ref, style: { width: 272, height: 64, display: "block", borderRadius: 12, background: "#f1f5f9" } });
+}
+function PsToolWindow({ tool, color, onColor, width, onWidth, markerOpacity, onMarkerOpacity, onClose }) {
+  const h = React.createElement;
+  const [wheel, setWheel] = React.useState(false);
+  const names = { pen: 'Stift', fountain: 'Füller', ballpen: 'Kugelschreiber', highlighter: 'Marker' };
+  const quick = ['#ff0000', '#ff8a00', '#ffcc00', '#14b8a6', '#2563eb', '#1e3a8a', '#8800ff', '#000000'];
+  const isMarker = tool === 'highlighter';
+  const lc = String(color).toLowerCase();
+  const stepBtn = (label, fn) => h('button', {
+    type: 'button',
+    ...psTapHandlers(fn),
+    style: { width: 30, height: 30, borderRadius: 15, border: 'none', background: '#f1f5f9', fontSize: 18, fontWeight: 700, color: '#334155', lineHeight: '30px', padding: 0, cursor: 'pointer', flexShrink: 0 }
+  }, label);
+  const row = (label, value, slider, minus, plus) => h('div', { style: { marginTop: 14 } },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: '#94a3b8', letterSpacing: '.04em', textTransform: 'uppercase', marginBottom: 4 } }, h('span', null, label), h('span', { style: { color: '#334155' } }, value)),
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } }, stepBtn('−', minus), slider, stepBtn('+', plus)));
+  const dotStyle = (c, on) => ({
+    width: 26, height: 26, borderRadius: 13, background: c, border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0,
+    boxShadow: on ? '0 0 0 2px #fff, 0 0 0 4px #334155' : 'inset 0 0 0 1px rgba(0,0,0,.12)'
+  });
+  const pct = Math.round(markerOpacity * 100);
+  return h('div', {
+    className: 'bg-white rounded-2xl shadow-2xl border border-slate-200',
+    'data-ps-tool-window': '1',
+    style: { position: 'fixed', left: 12, bottom: 70, width: 300, padding: 14, zIndex: 999999, maxHeight: 'calc(100vh - 90px)', overflowY: 'auto' }
+  },
+  h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
+    h('div', { style: { fontSize: 15, fontWeight: 800, color: '#0f172a' } }, names[tool] || 'Stift'),
+    h('button', {
+      type: 'button',
+      'aria-label': 'Schließen',
+      ...psTapHandlers(onClose),
+      style: { width: 32, height: 32, borderRadius: 16, border: 'none', background: '#f1f5f9', fontSize: 16, color: '#334155', cursor: 'pointer', padding: 0 }
+    }, '✕')),
+  h(PsToolPreview, { tool, color, width, opacity: markerOpacity }),
+  row('Dicke', width, h('input', {
+    type: 'range', min: 1, max: 12, step: 1, value: width,
+    onChange: e => onWidth(parseInt(e.target.value, 10)),
+    style: { flex: 1, minWidth: 0, accentColor: '#334155', height: 28 }
+  }), () => onWidth(Math.max(1, width - 1)), () => onWidth(Math.min(12, width + 1))),
+  isMarker ? row('Deckkraft', pct + ' %', h('input', {
+    type: 'range', min: 10, max: 60, step: 1, value: pct,
+    onChange: e => onMarkerOpacity(parseInt(e.target.value, 10) / 100),
+    style: { flex: 1, minWidth: 0, accentColor: color, height: 28 }
+  }), () => onMarkerOpacity(Math.max(0.1, markerOpacity - 0.05)), () => onMarkerOpacity(Math.min(0.6, markerOpacity + 0.05))) : null,
+  h('div', { style: { display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' } },
+    quick.map(c => h('button', { key: c, type: 'button', 'aria-label': c, onClick: () => onColor(c), style: dotStyle(c, lc === c) })),
+    h('button', {
+      type: 'button',
+      'aria-label': 'Farbrad',
+      onClick: () => setWheel(v => !v),
+      style: Object.assign(dotStyle('conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)', wheel), { background: 'conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)' })
+    })),
+  wheel ? h('div', { style: { marginTop: 12, display: 'flex', justifyContent: 'center' } }, h(PsColorWheel, { color, onPick: onColor })) : null);
+}
 const COLORS = [{
   id: 'black',
   value: '#000000',
@@ -24191,20 +24461,29 @@ function colorRefGlobal() {
 }
 function getInkToolDynamics(toolId) {
   if (toolId === 'fountain') return {
-    pGain: 0.70,
+    pGain: 0.95,
     vGain: 0.55,
-    fMin: 0.55,
-    fMax: 1.50,
-    smooth: 0.22
+    fMin: 0.45,
+    fMax: 1.90,
+    smooth: 0.25
   };
+  // v55.153: deutlich spürbare Druckreaktion (vorher ±22 % → kaum sichtbar)
   if (toolId === 'pen') return {
-    pGain: 0.40,
-    vGain: 0.18,
-    fMin: 0.78,
-    fMax: 1.22,
-    smooth: 0.30
+    pGain: 0.85,
+    vGain: 0.25,
+    fMin: 0.50,
+    fMax: 1.70,
+    smooth: 0.35
   };
-  return null; // ballpen / eraser / highlighter: konstante Breite
+  // v55.153: Kugelschreiber reagiert jetzt leicht auf Druck (wie ein echter Kuli)
+  if (toolId === 'ballpen') return {
+    pGain: 0.45,
+    vGain: 0.10,
+    fMin: 0.75,
+    fMax: 1.30,
+    smooth: 0.35
+  };
+  return null; // eraser / highlighter: konstante Breite
 }
 // Breitenfaktor aus Druck (0..1, 0.5 neutral) und normiertem Tempo (0..1, 0.35 neutral)
 function computeInkWidthFactor(dyn, pressure, velNorm) {
@@ -24213,47 +24492,236 @@ function computeInkWidthFactor(dyn, pressure, velNorm) {
   const vf = 1 + (0.35 - velNorm) * 2 * dyn.vGain;
   return Math.max(dyn.fMin, Math.min(dyn.fMax, pf * vf));
 }
+// === v55.152 PAPIER-GEFÜHL ===
+// 1) Druckkurve: Apple Pencil / S Pen liefern beim normalen Schreiben nur ca. 0.2–0.35.
+//    Linear wirkte die Linie dadurch dünn und "hart". Die Kurve hebt leichten Druck an
+//    (0.3 → ~0.49 = neutral), fester Druck bleibt kräftig – wie ein Stift auf Papier.
+function psInkPressure(ev) {
+  if (!ev || ev.pointerType !== 'pen' || !(ev.pressure > 0)) return 0.5;
+  return Math.max(0.05, Math.min(1, Math.pow(ev.pressure, 0.6)));
+}
+// 2) Deckende Tinte: Transparenz wird mit Papierweiß vorgemischt (alpha = 1).
+//    Vorher überlagerten sich die runden Segment-Enden mit alpha < 1 → dunkle "Perlen"
+//    im Strich (digitaler Marker-Look). Jetzt gleichmäßige Tinte wie auf Papier.
+const __psInkMixCache = {};
+function psInkStyle(color, opacity) {
+  const a = opacity == null ? 1 : Math.max(0, Math.min(1, opacity));
+  const c = String(color || '#1d4ed8').trim();
+  if (a >= 0.999) return { color: c, alpha: 1 };
+  const k = c + '|' + a.toFixed(3);
+  if (__psInkMixCache[k]) return __psInkMixCache[k];
+  let m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+  if (!m) return { color: c, alpha: a }; // unbekanntes Format → alte Darstellung
+  let hx = m[1];
+  if (hx.length === 3) hx = hx[0] + hx[0] + hx[1] + hx[1] + hx[2] + hx[2];
+  const ch = i => Math.round(parseInt(hx.substr(i, 2), 16) * a + 255 * (1 - a));
+  const res = { color: 'rgb(' + ch(0) + ',' + ch(2) + ',' + ch(4) + ')', alpha: 1 };
+  __psInkMixCache[k] = res;
+  return res;
+}
+// Live-Stil des laufenden Strichs (nicht im Strich-Objekt gespeichert → Datenformat unverändert)
+const __psInkLive = new WeakMap();
+// Gemeinsame Tinten-Engine für zusätzliche Stift-Felder (z. B. Notiz-Fenster Seite 1):
+// gleiche Druck-/Tempo-Logik wie der Haupt-Canvas → identisches Schreibgefühl überall.
+// === v55.154 HIGHCLASS-TINTE ===
+// Neigung: Pencil normal (≥ 40°) = unverändert; flach gehalten bis 1,8× breiter (wie Bleistift/Füller)
+function psInkTiltFactor(ev) {
+  if (!ev || ev.pointerType !== 'pen') return 1;
+  let alt = null;
+  if (typeof ev.altitudeAngle === 'number' && ev.altitudeAngle > 0) alt = ev.altitudeAngle;
+  else if (ev.tiltX || ev.tiltY) {
+    const tx = Math.tan((ev.tiltX || 0) * Math.PI / 180), ty = Math.tan((ev.tiltY || 0) * Math.PI / 180);
+    const m = Math.sqrt(tx * tx + ty * ty);
+    alt = m > 0 ? Math.atan(1 / m) : Math.PI / 2;
+  }
+  if (alt == null || !isFinite(alt)) return 1;
+  const deg = alt * 180 / Math.PI;
+  const t = Math.max(0, Math.min(1, (40 - deg) / 25));
+  return 1 + t * t * 0.8;
+}
+// Feinglättung der Stiftposition (entfernt Mikro-Zittern, ~5 ms Verzögerung) + Duplikat-Filter auf Rohdaten
+function psInkSmooth(stroke, x, y) {
+  if (stroke.rx != null && Math.abs(x - stroke.rx) < 0.15 && Math.abs(y - stroke.ry) < 0.15) return null;
+  stroke.rx = x;
+  stroke.ry = y;
+  if (stroke.sx == null) {
+    stroke.sx = x;
+    stroke.sy = y;
+  } else {
+    stroke.sx += (x - stroke.sx) * 0.6;
+    stroke.sy += (y - stroke.sy) * 0.6;
+  }
+  return { x: stroke.sx, y: stroke.sy };
+}
+// Form-Faktor: Tinten-Ansatz (Strich beginnt schmaler, wie beim Aufsetzen auf Papier) × Neigung
+function psInkShape(stroke, ev, dist) {
+  stroke.travel = (stroke.travel || 0) + (dist || 0);
+  const isBall = stroke.tool === 'ballpen';
+  const r = Math.min(1, stroke.travel / 10);
+  const taper = isBall ? 0.85 + 0.15 * r : 0.6 + 0.4 * r;
+  return taper * (isBall ? 1 : psInkTiltFactor(ev));
+}
+function psInkClampWf(dyn, v) {
+  return Math.max(dyn.fMin * 0.55, Math.min(dyn.fMax * 1.8, v));
+}
+function psInkAddPoint(stroke, ev, x, y) {
+  const pts = stroke.points;
+  if (stroke.tool !== 'eraser' && stroke.tool !== 'highlighter') {
+    const sm = psInkSmooth(stroke, x, y);
+    if (!sm) return false;
+    x = sm.x;
+    y = sm.y;
+  }
+  const lp = pts.length ? pts[pts.length - 1] : null;
+  if (lp && Math.abs(x - lp.x) < 0.15 && Math.abs(y - lp.y) < 0.15) return false;
+  const dyn = stroke.tool !== 'eraser' && stroke.tool !== 'highlighter' ? getInkToolDynamics(stroke.tool) : null;
+  const pr = psInkPressure(ev);
+  stroke.smoothedPressure = stroke.smoothedPressure == null ? pr : stroke.smoothedPressure * 0.6 + pr * 0.4;
+  const t = ev && ev.timeStamp || 0;
+  const dt = Math.max(1, t - (stroke.lastTime || t));
+  const dist = lp ? Math.hypot(x - lp.x, y - lp.y) : 0;
+  const vel = dist / dt;
+  stroke.smoothedVelocity = (stroke.smoothedVelocity || 0) * 0.65 + vel * 0.35;
+  const vN = Math.min(1, stroke.smoothedVelocity / 1.4);
+  let wf = 1;
+  if (dyn) {
+    const tg = computeInkWidthFactor(dyn, stroke.smoothedPressure, lp ? vN : 0.35) * psInkShape(stroke, ev, dist);
+    const pv = stroke.lastWf == null ? tg : stroke.lastWf;
+    let nx = pv + (tg - pv) * dyn.smooth;
+    nx = Math.max(pv - 0.08, Math.min(pv + 0.08, nx));
+    wf = psInkClampWf(dyn, nx);
+    stroke.lastWf = wf;
+  }
+  stroke.lastTime = t;
+  pts.push({ x, y, pressure: pr, width: Math.max(0.5, (stroke.baseLineWidth || 2) * wf), wf });
+  return true;
+}
+// Zeichnet nur das neueste Segment (Midpoint-Bezier, Breite = Mittel der Punktbreiten)
+function psInkDrawLast(ctx, stroke) {
+  const pts = stroke.points, n = pts.length;
+  if (n >= 3) {
+    const p0 = pts[n - 3], p1 = pts[n - 2], p2 = pts[n - 1];
+    ctx.lineWidth = Math.max(0.5, (p1.width + p2.width) / 2);
+    ctx.beginPath();
+    ctx.moveTo((p0.x + p1.x) / 2, (p0.y + p1.y) / 2);
+    ctx.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+    ctx.stroke();
+  } else if (n === 2) {
+    ctx.lineWidth = Math.max(0.5, pts[1].width);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[1].x, pts[1].y);
+    ctx.stroke();
+  } else if (n === 1) {
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.beginPath();
+    ctx.arc(pts[0].x, pts[0].y, Math.max(0.5, pts[0].width / 2), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+// Endstück beim Abheben: Live-Kurve endet bei mid(a,b) → letztes Stück bis b
+function psInkDrawTail(ctx, stroke) {
+  const pts = stroke.points, n = pts.length;
+  if (n < 3) return;
+  const a = pts[n - 2], b = pts[n - 1];
+  ctx.lineWidth = Math.max(0.5, b.width);
+  ctx.beginPath();
+  ctx.moveTo((a.x + b.x) / 2, (a.y + b.y) / 2);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+}
 // Hat der Stroke pro Punkt gespeicherte Breitenfaktoren (wf)?
 function strokeHasVariableWidth(stroke) {
-  return !!(stroke && (stroke.tool === 'pen' || stroke.tool === 'fountain') && Array.isArray(stroke.points) && stroke.points.length > 1 && stroke.points.some(p => p && p.wf != null));
+  return !!(stroke && (stroke.tool === 'pen' || stroke.tool === 'fountain' || stroke.tool === 'ballpen') && Array.isArray(stroke.points) && stroke.points.length > 1 && stroke.points.some(p => p && p.wf != null));
 }
 // Variable Strichbreite rendern: Midpoint-Quadratic-Segmente, lineWidth pro Segment.
 // pts = (skalierte) Koordinaten, rawPts = Original-Punkte mit wf, baseLW = Ziel-Basisbreite.
 // Identische Geometrie wie das Live-Rendering → Redraw sieht aus wie beim Schreiben.
 function drawVariableWidthPath(ctx, pts, rawPts, baseLW) {
+  // v55.154: Strich als EINE gefüllte Kontur (statt vieler Einzelsegmente mit Breitensprüngen).
+  // Mittellinie = dieselben Midpoint-Bezier-Kurven wie live, fein abgetastet; Breite fließend
+  // interpoliert → glatte, satte Kanten wie Tinte auf Papier (Bildschirm + PDF).
   const wf = i => {
     const p = rawPts[Math.min(i, rawPts.length - 1)];
     return p && p.wf != null ? p.wf : 1;
   };
   if (!pts || pts.length === 0) return;
+  const W = i => Math.max(0.5, baseLW * wf(i));
+  ctx.fillStyle = ctx.strokeStyle;
   if (pts.length === 1) {
     ctx.beginPath();
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.arc(pts[0].x, pts[0].y, Math.max(0.5, baseLW * wf(0)) / 2, 0, Math.PI * 2);
+    ctx.arc(pts[0].x, pts[0].y, W(0) / 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
     return;
   }
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  let prevX = pts[0].x,
-    prevY = pts[0].y;
-  for (let i = 1; i < pts.length; i++) {
-    const isLast = i === pts.length - 1;
-    const midX = isLast ? pts[i].x : (pts[i].x + pts[i + 1].x) / 2;
-    const midY = isLast ? pts[i].y : (pts[i].y + pts[i + 1].y) / 2;
-    ctx.beginPath();
-    ctx.lineWidth = Math.max(0.5, baseLW * ((wf(i - 1) + wf(i)) / 2));
-    ctx.moveTo(prevX, prevY);
-    if (isLast) {
-      ctx.lineTo(midX, midY);
-    } else {
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+  const cx = [], cy = [], cw = [];
+  const push = (x, y, w) => {
+    const k = cx.length;
+    if (k && Math.abs(cx[k - 1] - x) < 0.05 && Math.abs(cy[k - 1] - y) < 0.05) {
+      cw[k - 1] = Math.max(cw[k - 1], w);
+      return;
     }
-    ctx.stroke();
-    prevX = midX;
-    prevY = midY;
+    cx.push(x); cy.push(y); cw.push(w);
+  };
+  const n = pts.length;
+  push(pts[0].x, pts[0].y, W(0));
+  if (n === 2) {
+    push(pts[1].x, pts[1].y, W(1));
+  } else {
+    let sx = (pts[0].x + pts[1].x) / 2, sy = (pts[0].y + pts[1].y) / 2, sw = (W(0) + W(1)) / 2;
+    push(sx, sy, sw);
+    for (let i = 1; i < n - 1; i++) {
+      const qx = pts[i].x, qy = pts[i].y, qw = W(i);
+      const ex = (pts[i].x + pts[i + 1].x) / 2, ey = (pts[i].y + pts[i + 1].y) / 2, ew = (W(i) + W(i + 1)) / 2;
+      const len = Math.hypot(qx - sx, qy - sy) + Math.hypot(ex - qx, ey - qy);
+      const steps = Math.max(1, Math.min(8, Math.ceil(len / 1.5)));
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps, u = 1 - t;
+        push(u * u * sx + 2 * u * t * qx + t * t * ex, u * u * sy + 2 * u * t * qy + t * t * ey, u * u * sw + 2 * u * t * qw + t * t * ew);
+      }
+      sx = ex; sy = ey; sw = ew;
+    }
+    push(pts[n - 1].x, pts[n - 1].y, W(n - 1));
   }
+  const m = cx.length;
+  if (m < 2) {
+    ctx.beginPath();
+    ctx.arc(cx[0], cy[0], cw[0] / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    return;
+  }
+  // Kontur: linke Kante vorwärts, rechte Kante rückwärts (nonzero → Schleifen bleiben offen, Kreuzungen voll)
+  const lx = new Array(m), ly = new Array(m), rx = new Array(m), ry = new Array(m);
+  const tdx = new Array(m), tdy = new Array(m);
+  for (let i = 0; i < m; i++) {
+    const a = Math.max(0, i - 1), b = Math.min(m - 1, i + 1);
+    let dx = cx[b] - cx[a], dy = cy[b] - cy[a];
+    const d = Math.hypot(dx, dy) || 1;
+    dx /= d; dy /= d;
+    tdx[i] = dx; tdy[i] = dy;
+    const h = cw[i] / 2;
+    lx[i] = cx[i] - dy * h; ly[i] = cy[i] + dx * h;
+    rx[i] = cx[i] + dy * h; ry[i] = cy[i] - dx * h;
+  }
+  ctx.beginPath();
+  ctx.moveTo(lx[0], ly[0]);
+  for (let i = 1; i < m; i++) ctx.lineTo(lx[i], ly[i]);
+  for (let i = m - 1; i >= 0; i--) ctx.lineTo(rx[i], ry[i]);
+  ctx.closePath();
+  ctx.fill('nonzero');
+  // Runde Enden + runde Gelenke an Knicken (separat gefüllt → keine Auslöschung durch Windungsrichtung)
+  ctx.beginPath();
+  const dot = (x, y, r) => { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2); };
+  dot(cx[0], cy[0], cw[0] / 2);
+  dot(cx[m - 1], cy[m - 1], cw[m - 1] / 2);
+  for (let i = 1; i < m - 1; i++) {
+    const ax = cx[i] - cx[i - 1], ay = cy[i] - cy[i - 1], bx = cx[i + 1] - cx[i], by = cy[i + 1] - cy[i];
+    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+    if (la > 0 && lb > 0 && (ax * bx + ay * by) / (la * lb) < 0.94) dot(cx[i], cy[i], cw[i] / 2);
+  }
+  ctx.fill();
   ctx.beginPath(); // Pfad leeren, damit nachfolgendes ctx.stroke() nichts doppelt zeichnet
 }
 
@@ -24355,15 +24823,10 @@ function renderMarkerPreview(stroke) {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.lineWidth = Math.max(0.5, (stroke.baseLineWidth || 2) * 3);
+    ctx.fillStyle = ctx.strokeStyle;
     ctx.beginPath();
-    if (fp.length === 1) {
-      ctx.fillStyle = stroke.color || colorRefGlobal();
-      ctx.arc(fp[0].x, fp[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      buildMidpointPath(ctx, fp);
-      ctx.stroke();
-    }
+    psChiselPath(ctx, fp, ctx.lineWidth);
+    ctx.fill();
   } catch (_) {}
 }
 function hideMarkerPreview() {
@@ -24535,9 +24998,10 @@ const redrawCanvas = (canvas, strokes, scaleFactor = 1, key = '') => {
       ctx.globalAlpha = stroke.opacity;
       ctx.globalCompositeOperation = 'destination-over';
     } else {
+      const __is = psInkStyle(stroke.color, finalOpacity);
       ctx.lineWidth = finalLineWidth;
-      ctx.strokeStyle = stroke.color;
-      ctx.globalAlpha = finalOpacity;
+      ctx.strokeStyle = __is.color;
+      ctx.globalAlpha = __is.alpha;
       ctx.globalCompositeOperation = 'source-over';
     }
     if (stroke.points.length > 0) {
@@ -24548,6 +25012,14 @@ const redrawCanvas = (canvas, strokes, scaleFactor = 1, key = '') => {
         x: p.x * responsiveScaleFactor,
         y: p.y * responsiveScaleFactor
       }));
+      if (stroke.tool === 'highlighter') {
+        // v55.158: Keilspitze (gleiche Form wie live)
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        psChiselPath(ctx, pts, ctx.lineWidth);
+        ctx.fill();
+        ctx.beginPath();
+      } else
       // v44.0: pen/fountain mit gespeicherten Breitenfaktoren → identisch zum Live-Bild
       if (strokeHasVariableWidth(stroke) && stroke.tool !== 'eraser' && stroke.tool !== 'highlighter') {
         drawVariableWidthPath(ctx, pts, stroke.points, finalLineWidth);
@@ -30248,6 +30720,7 @@ function App() {
   const [showPenToolPicker, setShowPenToolPicker] = useState(false);
   const [showStrokePicker, setShowStrokePicker] = useState(false);
   const [showEraserPicker, setShowEraserPicker] = useState(false);
+  const [markerOpacity, setMarkerOpacity] = useState(0.35); // v55.157: Marker-Deckkraft (10–60 %)
   const [eraserSize, setEraserSize] = useState(4); // Multiplikator für Radierer-Größe (1-10)
   const lastPenTapRef = useRef(0);
   const [color, setColor] = useState('#0044ff');
@@ -30262,6 +30735,7 @@ function App() {
   const strokeWidthRef = useRef(4);
   const eraserSizeRef = useRef(4);
   const opacityRef = useRef(0.85);
+  const markerOpacityRef = useRef(0.35);
   const colorRef = useRef('#0044ff');
   const drawnStrokesRef = useRef(drawnStrokes);
   useEffect(() => {
@@ -30301,7 +30775,7 @@ function App() {
     if (toolId === 'highlighter') {
       return {
         width: bw,
-        opacity: Math.max(0.10, Math.min(0.4, baseOpacity * 0.35)),
+        opacity: Math.max(0.10, Math.min(0.6, markerOpacityRef.current)),
         smooth: 0
       };
     }
@@ -30640,6 +31114,9 @@ function App() {
   useEffect(() => {
     opacityRef.current = opacity;
   }, [opacity]);
+  useEffect(() => {
+    markerOpacityRef.current = markerOpacity;
+  }, [markerOpacity]);
   const [isWritingEnabled, setIsWritingEnabled] = useState(true);
   const [inputMode, setInputMode] = useState('pen');
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -35434,8 +35911,8 @@ function App() {
 
     // === v44.0 TINTEN-ENGINE: Startbreite aus echtem Stylus-Druck ===
     const dynStart = currentTool !== 'eraser' && currentTool !== 'highlighter' ? getInkToolDynamics(currentTool) : null;
-    const pressure = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
-    const wf0 = dynStart ? computeInkWidthFactor(dynStart, pressure, 0.35) : 1;
+    const pressure = psInkPressure(e);
+    const wf0 = dynStart ? psInkClampWf(dynStart, computeInkWidthFactor(dynStart, pressure, 0.35) * (currentTool === 'ballpen' ? 0.85 : 0.6 * psInkTiltFactor(e))) : 1;
     const initWidth = Math.max(0.5, finalLineWidth * wf0);
     const newStroke = {
       tool: currentTool,
@@ -35457,7 +35934,12 @@ function App() {
       lastWf: wf0,
       smoothedPressure: pressure,
       lastTime: e.timeStamp,
-      smoothedVelocity: 0
+      smoothedVelocity: 0,
+      rx: x,
+      ry: y,
+      sx: x,
+      sy: y,
+      travel: 0
     };
 
     // v46.2: Textmarker → Vorschau-Ebene positionieren (voll deckend + CSS-opacity).
@@ -35477,8 +35959,12 @@ function App() {
     ctx.save();
 
     // Canvas-Context für Live-Drawing einrichten
-    ctx.strokeStyle = currentColor;
-    ctx.globalAlpha = currentOpacity;
+    // v55.152: deckende Tinte (Transparenz vorgemischt) – gleiche Formel wie redrawCanvas
+    const __liveOp = key && key.startsWith('sit_') && currentTool !== 'eraser' && currentTool !== 'highlighter' ? Math.min(1, currentOpacity * 1.35) : currentOpacity;
+    const __liveInk = psInkStyle(currentColor, __liveOp);
+    __psInkLive.set(newStroke, __liveInk);
+    ctx.strokeStyle = currentTool === 'highlighter' ? currentColor : __liveInk.color;
+    ctx.globalAlpha = currentTool === 'highlighter' ? currentOpacity : __liveInk.alpha;
     ctx.lineWidth = Math.max(0.5, initWidth);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -35620,9 +36106,10 @@ function App() {
       ctx.globalAlpha = stroke.opacity != null ? stroke.opacity : 0.4;
       ctx.strokeStyle = stroke.color || colorRefGlobal();
     } else {
+      const __li = __psInkLive.get(stroke) || psInkStyle(stroke.color || colorRefGlobal(), stroke.opacity);
       ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = stroke.opacity != null ? stroke.opacity : 1;
-      ctx.strokeStyle = stroke.color || colorRefGlobal();
+      ctx.globalAlpha = __li.alpha;
+      ctx.strokeStyle = __li.color;
     }
     for (const ev of events) {
       const {
@@ -35630,8 +36117,15 @@ function App() {
         y: cssY
       } = getRelativeCoords(ev, canvas) || {};
       if (cssX == null || cssY == null) continue;
-      const x = cssX;
-      const y = cssY;
+      let x = cssX;
+      let y = cssY;
+      // v55.154: Feinglättung (nur Tinte; Radierer/Marker unverändert)
+      if (currentTool !== 'eraser' && currentTool !== 'highlighter') {
+        const __sm = psInkSmooth(stroke, x, y);
+        if (!__sm) continue;
+        x = __sm.x;
+        y = __sm.y;
+      }
 
       // === v56 DOPPELSTRICH-FIX (Apple Pencil / S Pen "Geisterlinie") ===
       // Manche Stylus-Geräte liefern via getCoalescedEvents() den aktuellen Punkt
@@ -35653,7 +36147,7 @@ function App() {
       const dyn = currentTool !== 'eraser' && currentTool !== 'highlighter' ? getInkToolDynamics(currentTool) : null;
 
       // Echter Stylus-Druck (Apple Pencil / S Pen); Fallback neutral 0.5
-      const prRaw = ev.pointerType === 'pen' && ev.pressure > 0 ? ev.pressure : 0.5;
+      const prRaw = psInkPressure(ev);
       stroke.smoothedPressure = stroke.smoothedPressure == null ? prRaw : stroke.smoothedPressure * 0.6 + prRaw * 0.4;
       const pressure = stroke.smoothedPressure;
 
@@ -35668,12 +36162,12 @@ function App() {
       // Ziel-Faktor → geglättet annähern (keine Breitensprünge)
       let wf = 1;
       if (dyn) {
-        const wfTarget = computeInkWidthFactor(dyn, pressure, velNorm);
+        const wfTarget = computeInkWidthFactor(dyn, pressure, velNorm) * psInkShape(stroke, ev, dist);
         const prevWf = stroke.lastWf == null ? wfTarget : stroke.lastWf;
         let next = prevWf + (wfTarget - prevWf) * dyn.smooth;
-        // Max. ±0.06 Änderung pro Punkt (bei 120Hz immer noch sehr reaktiv)
-        next = Math.max(prevWf - 0.06, Math.min(prevWf + 0.06, next));
-        wf = Math.max(dyn.fMin, Math.min(dyn.fMax, next));
+        // Max. ±0.08 Änderung pro Punkt (bei 120Hz immer noch sehr reaktiv)
+        next = Math.max(prevWf - 0.08, Math.min(prevWf + 0.08, next));
+        wf = psInkClampWf(dyn, next);
         stroke.lastWf = wf;
       }
       const smoothedWidth = Math.max(0.5, baseLW * wf);
@@ -35724,7 +36218,7 @@ function App() {
       } else if (pts.length === 1) {
         // Einzelner Punkt: kleiner Kreis in Stiftfarbe
         const prevFill = ctx.fillStyle;
-        ctx.fillStyle = stroke.color || colorRefGlobal();
+        ctx.fillStyle = ctx.strokeStyle;
         ctx.beginPath();
         ctx.arc(x, y, Math.max(0.5, smoothedWidth / 2), 0, Math.PI * 2);
         ctx.fill();
@@ -35855,15 +36349,10 @@ function App() {
           ctx.globalAlpha = finishedStroke.opacity != null ? finishedStroke.opacity : 0.4;
           ctx.strokeStyle = finishedStroke.color || colorRefGlobal();
           ctx.lineWidth = Math.max(0.5, (finishedStroke.baseLineWidth || 2) * 3);
+          ctx.fillStyle = ctx.strokeStyle;
           ctx.beginPath();
-          if (fp.length === 1) {
-            ctx.fillStyle = finishedStroke.color || colorRefGlobal();
-            ctx.arc(fp[0].x, fp[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
-            ctx.fill();
-          } else {
-            buildMidpointPath(ctx, fp);
-            ctx.stroke();
-          }
+          psChiselPath(ctx, fp, ctx.lineWidth);
+          ctx.fill();
         }
       } catch (_) {}
       hideMarkerPreview();
@@ -35874,8 +36363,9 @@ function App() {
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = finishedStroke.opacity != null ? finishedStroke.opacity : 1;
-        ctx.strokeStyle = finishedStroke.color || colorRefGlobal();
+        const __le = __psInkLive.get(finishedStroke) || psInkStyle(finishedStroke.color || colorRefGlobal(), finishedStroke.opacity);
+        ctx.globalAlpha = __le.alpha;
+        ctx.strokeStyle = __le.color;
         const fp = finishedStroke.points;
         const a = fp[fp.length - 2];
         const b = fp[fp.length - 1];
@@ -35998,6 +36488,22 @@ function App() {
       capture: true
     });
   }, [showPenToolPicker]);
+  // v55.159: Sobald man auf einer Zeichenfläche zu schreiben beginnt, schließen sich alle Auswahlfenster
+  // (Werkzeug-Fenster, Radierer-Größe, Farbwahl) automatisch.
+  useEffect(() => {
+    if (!showStrokePicker && !showEraserPicker && !showColorPicker && !showPenToolPicker) return;
+    const onWrite = e => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.tagName !== 'CANVAS' || t.closest('[data-ps-tool-window]')) return;
+      setShowStrokePicker(false);
+      setShowEraserPicker(false);
+      setShowColorPicker(false);
+      setShowPenToolPicker(false);
+    };
+    window.addEventListener('pointerdown', onWrite, { capture: true });
+    return () => window.removeEventListener('pointerdown', onWrite, { capture: true });
+  }, [showStrokePicker, showEraserPicker, showColorPicker, showPenToolPicker]);
   const renderPenToolButtons = () => {
     // Samsung-Notes-Stil: alle Werkzeuge nebeneinander.
     // Tippt man auf das BEREITS aktive Werkzeug → Dicke-Regler öffnet sich.
@@ -36054,117 +36560,26 @@ function App() {
       const isActive = tool === t.id;
       return /*#__PURE__*/React.createElement("button", {
         key: t.id,
-        onClick: () => handleToolTap(t.id),
-        onPointerUp: e => {
-          if (e.pointerType === 'pen') {
-            e.preventDefault();
-            e.stopPropagation();
-            handleToolTap(t.id);
-          }
-        },
-        className: `px-1.5 py-1 rounded-lg flex flex-col items-center gap-0 min-w-[36px] transition-colors ${isActive ? t.activeC : 'text-slate-400 hover:bg-slate-50'}`,
-        title: t.label
-      }, /*#__PURE__*/React.createElement(Icon, {
-        d: t.Icon,
-        size: 16
-      }), /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: '7px',
-          fontWeight: 800,
-          lineHeight: 1,
-          marginTop: '2px',
-          whiteSpace: 'nowrap'
-        }
-      }, t.label));
-    }), showStrokePicker && (tool === 'pen' || tool === 'fountain' || tool === 'ballpen' || tool === 'highlighter') && /*#__PURE__*/React.createElement("div", {
-      className: "bg-white p-3 rounded-xl shadow-2xl border border-slate-200",
-      style: {
-        position: 'fixed',
-        left: '12px',
-        bottom: '70px',
-        width: '240px',
-        zIndex: 999999
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center mb-2"
-    }, tool === 'fountain' ? 'Füller' : tool === 'ballpen' ? 'Kugelschreiber' : tool === 'highlighter' ? 'Marker' : 'Stift', " — Dicke"), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        width: '100%'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: Math.max(4, strokeWidth * 1.5) + 'px',
-        height: Math.max(4, strokeWidth * 1.5) + 'px',
-        background: '#2563eb',
-        borderRadius: '50%',
-        flexShrink: 0,
-        minWidth: '4px'
-      }
-    }), /*#__PURE__*/React.createElement("input", {
-      type: "range",
-      min: "1",
-      max: "12",
-      step: "1",
-      value: strokeWidth,
-      onChange: e => setStrokeWidth(parseInt(e.target.value, 10)),
-      style: {
-        width: '140px',
-        minWidth: '140px',
-        accentColor: '#2563eb',
-        height: '28px',
-        display: 'block'
-      }
-    }), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: '16px',
-        fontWeight: 900,
-        color: '#1d4ed8',
-        width: '24px',
-        textAlign: 'center',
-        flexShrink: 0
-      }
-    }, strokeWidth)), /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: '10px',
-        height: '28px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#f8fafc',
-        borderRadius: '8px'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: '80%',
-        height: Math.max(1, strokeWidth) + 'px',
-        background: '#1e293b',
-        borderRadius: '99px'
-      }
-    })), /*#__PURE__*/React.createElement("button", {
-      onClick: () => setShowStrokePicker(false),
-      onPointerUp: e => {
-        if (e.pointerType === 'pen') {
-          e.preventDefault();
-          e.stopPropagation();
-          setShowStrokePicker(false);
-        }
-      },
-      style: {
-        marginTop: '8px',
-        width: '100%',
-        padding: '9px',
-        borderRadius: '8px',
-        background: '#2563eb',
-        color: '#fff',
-        border: 'none',
-        fontSize: '12px',
-        fontWeight: 700,
-        cursor: 'pointer'
-      }
-    }, "Fertig ✓")), showEraserPicker && tool === 'eraser' && /*#__PURE__*/React.createElement("div", {
+        ...psTapHandlers(() => handleToolTap(t.id)),
+        className: `w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isActive ? 'bg-slate-200' : 'hover:bg-slate-100'}`,
+        title: t.label,
+        'aria-label': t.label
+      }, /*#__PURE__*/React.createElement(PsToolIcon, {
+        id: t.id,
+        color,
+        active: isActive,
+        size: 28
+      }));
+    }), showStrokePicker && (tool === 'pen' || tool === 'fountain' || tool === 'ballpen' || tool === 'highlighter') && /*#__PURE__*/React.createElement(PsToolWindow, {
+      tool,
+      color,
+      onColor: setColor,
+      width: strokeWidth,
+      onWidth: setStrokeWidth,
+      markerOpacity,
+      onMarkerOpacity: setMarkerOpacity,
+      onClose: () => setShowStrokePicker(false)
+    }), showEraserPicker && tool === 'eraser' && /*#__PURE__*/React.createElement("div", {
       className: "bg-white p-3 rounded-xl shadow-2xl border border-slate-200",
       style: {
         position: 'fixed',
@@ -36732,15 +37147,24 @@ function App() {
           ctx.globalAlpha = stroke.opacity != null ? stroke.opacity : 1;
           ctx.globalCompositeOperation = 'destination-over';
         } else {
+          const __ps = psInkStyle(stroke.color || '#1d4ed8', stroke.opacity);
           ctx.lineWidth = lw;
-          ctx.strokeStyle = stroke.color || '#1d4ed8';
-          ctx.globalAlpha = stroke.opacity != null ? stroke.opacity : 1;
+          ctx.strokeStyle = __ps.color;
+          ctx.globalAlpha = __ps.alpha;
           ctx.globalCompositeOperation = 'source-over';
         }
         const pts = stroke.points.map(p => ({
           x: p.x * useX + offsetX,
           y: p.y * useY + offsetY
         }));
+        if (stroke.tool === 'highlighter') {
+          // v55.158: Keilspitze auch im PDF
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.beginPath();
+          psChiselPath(ctx, pts, ctx.lineWidth);
+          ctx.fill();
+          ctx.beginPath();
+        } else
         // v44.0: pen/fountain mit Breitenfaktoren → Druckbild = Bildschirmbild
         if (strokeHasVariableWidth(stroke) && stroke.tool !== 'eraser' && stroke.tool !== 'highlighter') {
           drawVariableWidthPath(ctx, pts, stroke.points, lw);
@@ -45180,10 +45604,18 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
         ctx.globalAlpha = op * 0.4;
         ctx.globalCompositeOperation = 'destination-over';
       } else {
-        ctx.lineWidth = vw;
-        ctx.strokeStyle = col;
-        ctx.globalAlpha = op;
+        // v55.152: Tinten-Engine (Druck, Tempo, Bezier, deckende Tinte)
+        const ink = psInkStyle(col, Math.min(1, (op == null ? 1 : op) * 1.35));
+        ctx.strokeStyle = ink.color;
+        ctx.globalAlpha = ink.alpha;
         ctx.globalCompositeOperation = 'source-over';
+        const s = { tool, color: col, width: w, opacity: op, points: [], baseWidth: rect.width, baseHeight: rect.height, baseLineWidth: Math.max(1.8, vw), ink: true };
+        psInkAddPoint(s, e.nativeEvent || e, rawX, rawY);
+        psInkDrawLast(ctx, s);
+        stepDrawingRef.current = true;
+        stepStrokeRef.current = s;
+        try { c.setPointerCapture(e.pointerId); } catch (_) {}
+        return;
       }
       ctx.beginPath();
       ctx.moveTo(rawX, rawY);
@@ -45211,9 +45643,26 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       if (!c) return;
       e.preventDefault();
       const rect = c.getBoundingClientRect();
+      const s = stepStrokeRef.current;
+      if (s.tool === 'highlighter') {
+        // v55.158: Keilmarker live über denselben Renderer wie das Endergebnis
+        s.points.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+        try { redrawCanvas(c, (drawnStrokes[sitKey] || []).concat([s]), 1, sitKey); } catch (_) {}
+        return;
+      }
+      if (s.ink) {
+        const ctx = c.getContext('2d');
+        const ne = e.nativeEvent || e;
+        let evs = null;
+        try { evs = ne.getCoalescedEvents ? ne.getCoalescedEvents() : null; } catch (_) {}
+        (evs && evs.length ? evs : [ne]).forEach(ev => {
+          if (psInkAddPoint(s, ev, ev.clientX - rect.left, ev.clientY - rect.top)) psInkDrawLast(ctx, s);
+        });
+        return;
+      }
       const rawX = e.clientX - rect.left;
       const rawY = e.clientY - rect.top;
-      stepStrokeRef.current.points.push({
+      s.points.push({
         x: rawX,
         y: rawY
       });
@@ -45229,7 +45678,12 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       const c = stepCanvasRef.current;
       if (c) {
         const ctx = c.getContext('2d');
+        if (stroke && stroke.ink) { try { psInkDrawTail(ctx, stroke); } catch (_) {} }
         ctx.restore();
+      }
+      if (stroke && stroke.ink) {
+        delete stroke.ink;
+        delete stroke.smoothedPressure; delete stroke.smoothedVelocity; delete stroke.lastTime; delete stroke.lastWf; delete stroke.rx; delete stroke.ry; delete stroke.sx; delete stroke.sy; delete stroke.travel;
       }
       // Strich in State speichern → Grid-Kacheln zeigen ihn sofort
       if (stroke && stroke.points.length > 1) {
@@ -49911,51 +50365,21 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     size: 16
   }))), inputMode === 'pen' && !scrollMode && /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1 bg-white p-0.5 rounded-lg border border-slate-200 shadow-sm animate-in items-center relative z-50"
-  }, renderPenToolButtons(), (tool === 'pen' || tool === 'fountain' || tool === 'ballpen' || tool === 'highlighter') && /*#__PURE__*/React.createElement("div", {
-    className: "opacity-slider-group flex items-center gap-2 bg-slate-50 rounded border border-slate-200 p-1.5 ml-2"
-  }, /*#__PURE__*/React.createElement(Icon, {
-    d: ICONS.Sun,
-    size: 16,
-    className: "text-slate-400"
-  }), /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: "10",
-    max: "100",
-    value: Math.round(opacity * 100),
-    onChange: e => setOpacity(parseInt(e.target.value) / 100),
-    className: "w-20 h-1 appearance-none bg-blue-200 rounded-full [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:bg-blue-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-lg",
-    title: `Deckkraft: ${Math.round(opacity * 100)}%`
-  })), /*#__PURE__*/React.createElement("div", {
+  }, renderPenToolButtons(), tool !== 'eraser' && /*#__PURE__*/React.createElement("div", {
     className: "toolbar-divider w-px h-6 bg-slate-200 mx-1"
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "color-picker-group relative"
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowColorPicker(!showColorPicker),
-    className: "w-8 h-8 rounded-full border shadow-sm flex items-center justify-center ring-offset-2 focus:ring-2",
+  }), tool !== 'eraser' && /*#__PURE__*/React.createElement("button", {
+    ...psTapHandlers(() => {
+      setShowStrokePicker(v => !v);
+      setShowEraserPicker(false);
+      setShowColorPicker(false);
+    }),
+    className: "w-8 h-8 rounded-full border shadow-sm",
     style: {
       backgroundColor: color
-    }
-  }, /*#__PURE__*/React.createElement(Icon, {
-    d: ICONS.Palette,
-    size: 12,
-    className: "text-white mix-blend-difference"
-  })), showColorPicker && /*#__PURE__*/React.createElement("div", {
-    className: "absolute bottom-full left-1/2 -translate-x-1/2 mb-3 bg-white p-3 rounded-xl shadow-2xl border border-slate-200 grid grid-cols-4 gap-2 w-[180px] z-[100]"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "col-span-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center mb-1"
-  }, "Farbe wählen"), COLORS.map(c => /*#__PURE__*/React.createElement("button", {
-    key: c.id,
-    onClick: () => {
-      setColor(c.value);
-      setShowColorPicker(false);
-      if (c.id === 'white') triggerToast('Weiß: auf hellem Canvas kaum sichtbar!');
     },
-    className: `w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${color === c.value ? 'border-slate-400 shadow-inner scale-110' : 'border-transparent'}`,
-    style: {
-      backgroundColor: c.value
-    },
-    title: c.label
-  }))))), inputMode === 'keyboard' && /*#__PURE__*/React.createElement("div", {
+    title: "Farbe & Dicke",
+    'aria-label': "Farbe und Dicke"
+  })), inputMode === 'keyboard' && /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1 bg-white p-0.5 rounded-lg border border-slate-200 shadow-sm animate-in items-center relative z-50"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex bg-slate-50 rounded border border-slate-200 p-0.5 gap-0.5"
@@ -50127,51 +50551,21 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     size: 16
   }))), inputMode === 'pen' && /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1 bg-white p-0.5 rounded-lg border border-slate-200 shadow-sm animate-in items-center relative z-50"
-  }, renderPenToolButtons(), (tool === 'pen' || tool === 'fountain' || tool === 'ballpen' || tool === 'highlighter') && /*#__PURE__*/React.createElement("div", {
-    className: "opacity-slider-group flex items-center gap-2 bg-slate-50 rounded border border-slate-200 p-1.5 ml-2"
-  }, /*#__PURE__*/React.createElement(Icon, {
-    d: ICONS.Sun,
-    size: 16,
-    className: "text-slate-400"
-  }), /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: "10",
-    max: "100",
-    value: Math.round(opacity * 100),
-    onChange: e => setOpacity(parseInt(e.target.value) / 100),
-    className: "w-20 h-1 appearance-none bg-blue-200 rounded-full [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:bg-blue-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-lg",
-    title: `Deckkraft: ${Math.round(opacity * 100)}%`
-  })), /*#__PURE__*/React.createElement("div", {
+  }, renderPenToolButtons(), tool !== 'eraser' && /*#__PURE__*/React.createElement("div", {
     className: "toolbar-divider w-px h-6 bg-slate-200 mx-1"
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "color-picker-group relative"
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowColorPicker(!showColorPicker),
-    className: "w-8 h-8 rounded-full border shadow-sm flex items-center justify-center ring-offset-2 focus:ring-2",
+  }), tool !== 'eraser' && /*#__PURE__*/React.createElement("button", {
+    ...psTapHandlers(() => {
+      setShowStrokePicker(v => !v);
+      setShowEraserPicker(false);
+      setShowColorPicker(false);
+    }),
+    className: "w-8 h-8 rounded-full border shadow-sm",
     style: {
       backgroundColor: color
-    }
-  }, /*#__PURE__*/React.createElement(Icon, {
-    d: ICONS.Palette,
-    size: 12,
-    className: "text-white mix-blend-difference"
-  })), showColorPicker && /*#__PURE__*/React.createElement("div", {
-    className: "absolute bottom-full left-1/2 -translate-x-1/2 mb-3 bg-white p-3 rounded-xl shadow-2xl border border-slate-200 grid grid-cols-4 gap-2 w-[180px] z-[100]"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "col-span-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center mb-1"
-  }, "Farbe wählen"), COLORS.map(c => /*#__PURE__*/React.createElement("button", {
-    key: c.id,
-    onClick: () => {
-      setColor(c.value);
-      setShowColorPicker(false);
-      if (c.id === 'white') triggerToast('Weiß: auf hellem Canvas kaum sichtbar!');
     },
-    className: `w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${color === c.value ? 'border-slate-400 shadow-inner scale-110' : 'border-transparent'}`,
-    style: {
-      backgroundColor: c.value
-    },
-    title: c.label
-  }))))), inputMode === 'keyboard' && /*#__PURE__*/React.createElement("div", {
+    title: "Farbe & Dicke",
+    'aria-label': "Farbe und Dicke"
+  })), inputMode === 'keyboard' && /*#__PURE__*/React.createElement("div", {
     className: "flex gap-1 bg-white p-0.5 rounded-lg border border-slate-200 shadow-sm animate-in items-center relative z-50"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex bg-slate-50 rounded border border-slate-200 p-0.5 gap-0.5"
