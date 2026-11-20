@@ -5,17 +5,6 @@
   "geaendertAm": "18.11.2026",
   "geraete": [
     {
-      "name": "Google Pixel 11",
-      "modell": "Pixel 11",
-      "gen": 11,
-      "stufe": "basis",
-      "speicher": "",
-      "speicherGb": 0,
-      "preis": 130,
-      "url": "https://www.o2online.de/geraete/google/",
-      "bild": "https://static2.o9.de/resource/blob/2394040/91669740b88ce0ec5f3e78fa6ae7c93a/png/samsung-galaxy-s26-ultra-bild-data.webp"
-    },
-    {
       "name": "Google Pixel 11 Pro",
       "modell": "Pixel 11 Pro",
       "gen": 11,

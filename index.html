@@ -25281,6 +25281,15 @@ const psPixelKatalogLaden = () => {
     const daten = d && Array.isArray(d.geraete) ? d : {
       geraete: []
     };
+    // Schutz: falsch gelesene Kacheln (Fremdbild, kein Produktlink, Preis unter Stufen-Minimum) nie anzeigen
+    const minStufe = {
+      basis: 450,
+      a: 300,
+      pro: 700,
+      'pro-xl': 800,
+      fold: 1500
+    };
+    daten.geraete = daten.geraete.filter(g => g && /\/e-shop\/google\/[^?#]*details/i.test(g.url || '') && g.preis >= (minStufe[g.stufe] || 100) && !/galaxy|samsung|iphone|apple|xiaomi/i.test(g.bild || ''));
     window.__psPixelKat = {
       zeit: Date.now(),
       daten

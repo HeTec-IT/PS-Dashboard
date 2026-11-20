@@ -17,6 +17,20 @@ const STUFE_NAME = { a: 'a', pro: ' Pro', proxl: ' Pro XL', xl: ' XL', fold: ' F
 const STUFEN_REIHE = ['basis', 'a', 'pro', 'pro-xl', 'fold'];
 const PREIS_MIN = 100;
 const PREIS_MAX = 2600;
+// Untergrenzen je Stufe: ein "Pixel 11" für 130 € ist garantiert eine falsch gelesene Kachel (Zubehör, Rate, Banner)
+const PREIS_MIN_STUFE = { basis: 450, a: 300, pro: 700, 'pro-xl': 800, fold: 1500 };
+const FREMD_RE = /Galaxy|Samsung|iPhone|Apple|Xiaomi|Motorola|OnePlus|Nothing/i;
+const PRODUKTLINK_RE = /\/e-shop\/google\/[^?#]*details/i;
+
+// Nur echte Pixel-Produktkacheln: Produktlink, Speicher, Stufen-Preis, kein fremdes Bild
+export function plausibel(g) {
+  if (!g || !g.modell) return false;
+  if (!PRODUKTLINK_RE.test(g.url || '')) return false;
+  if (!g.speicherGb) return false;
+  if (g.preis < (PREIS_MIN_STUFE[g.stufe] || PREIS_MIN)) return false;
+  if (FREMD_RE.test(g.bild || '')) return false;
+  return true;
+}
 
 export function modellAusText(text) {
   const m = MODELL_RE.exec(String(text || ''));
@@ -83,6 +97,7 @@ const BUNDLE_RE = /Pixel\s+\d{1,2}(?:\s*(?:Pro\s*Fold|Pro\s*XL|Pro|XL|Fold|a))?\
 // Eine Kachel aus dem sichtbaren Seitentext (Name + Gerätepreis + Speicher)
 export function kandidatAusKartentext(text, url = '', bild = '') {
   if (BUNDLE_RE.test(String(text || '')) || /-mit-/i.test(String(url || ''))) return null;
+  if (FREMD_RE.test(String(text || '')) || FREMD_RE.test(String(bild || ''))) return null;
   const modell = modellAusText(text);
   if (!modell) return null;
   // Kachel-Text: "... 24 Monatsraten zu 0% Gerätepreis: 991,00 €" -> der Gerätepreis ist maßgeblich
@@ -168,7 +183,7 @@ export function zusammenfuehren(liste) {
     if (!alt) map.set(key, { ...k });
     else for (const f of ['preis', 'url', 'bild', 'speicher']) if (!alt[f] && k[f]) alt[f] = k[f];
   }
-  let geraete = [...map.values()].filter(g => g.preis >= PREIS_MIN && g.preis <= PREIS_MAX);
+  let geraete = [...map.values()].filter(g => g.preis >= PREIS_MIN && g.preis <= PREIS_MAX && plausibel(g));
   // Gibt es ein Modell mit Speicherangabe, fliegen die Einträge ohne Speicher raus (Doppelte)
   const mitSpeicher = new Set(geraete.filter(g => g.speicherGb).map(g => g.modell));
   geraete = geraete.filter(g => g.speicherGb || !mitSpeicher.has(g.modell));
