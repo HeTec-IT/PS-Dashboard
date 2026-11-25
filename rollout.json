@@ -1,4 +1,4 @@
 {
-  "neu": [],
-  "hinweis": "Shop-IDs, die index-neu.html bekommen, z. B. [\"schwaebisch-hall\"]. Leer = alle Shops bleiben auf der bisherigen App (index.html). Stand 25.11.2026: index-neu.html = Release-Kandidat v55.230 (Hall-Test, noch aus)."
+  "neu": ["schwaebisch-hall"],
+  "hinweis": "Shop-IDs, die index-neu.html bekommen, z. B. [\"schwaebisch-hall\"]. Leer = alle Shops bleiben auf der bisherigen App (index.html). Stand 25.11.2026: Hall-Test auf index-neu.html (v55.231). Rueckweg: Eintrag streichen."
 }
