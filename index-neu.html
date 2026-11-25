@@ -1173,7 +1173,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '55.230';
+    window.APP_VERSION = '55.231';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -8957,6 +8957,14 @@ function PS_IS_ADMIN() {
   // von jedem fälschbar gewesen - zählt nur noch die echte, aus dem
   // Firestore-Profil geladene Rolle.
   return typeof window !== 'undefined' && window.__PS_IS_ADMIN === true;
+}
+// PDF-Schnellknopf (Seite 2): nur fuer den Inhaber (Admin UND dieses Konto), nicht fuer weitere Admins
+function PS_IS_PDF_OWNER() {
+  try {
+    return PS_IS_ADMIN() && String(window.__betaAuth && window.__betaAuth.currentUser && window.__betaAuth.currentUser.email || '').trim().toLowerCase() === 'd.dasilva@hetec-gmbh.de';
+  } catch (e) {
+    return false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -54248,7 +54256,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     size: 14
   }), /*#__PURE__*/React.createElement("span", {
     className: "ps-ft-lbl"
-  }, " Zurück")), PS_IS_ADMIN() && /*#__PURE__*/React.createElement("button", {
+  }, " Zurück")), PS_IS_PDF_OWNER() && /*#__PURE__*/React.createElement("button", {
     onClick: handleQuickPdf,
     "data-ps-quick-pdf": "1",
     title: "PDF sofort erstellen",
