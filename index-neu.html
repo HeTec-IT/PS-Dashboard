@@ -13355,7 +13355,6 @@ async function psO2Pass(job, src, v, T, left, say, hooks) {
     throw psO2Err(e && e.psTimeout ? 'timeout' : 'engine', e && e.message);
   }
   job.inRecog = false;
-  try { if (c && c.width > 1) { c.width = 1; c.height = 1; } } catch (e) {} // v55.232: Speicher der Bildflaeche sofort zurueckgeben
   chk();
   const data = r && r.data ? r.data : {};
   return { sparse: v.psm === 11, text: data.text || '', words: psO2WordsOf(data), ms: Date.now() - t0 };
@@ -15075,11 +15074,7 @@ function PsO2Import({ onApply, onClose, initial }) {
   const CAM_LABEL = { tarife: 'Tarif', geraete: 'Handy', internet: 'Internet@Home', kosten: 'Kostenblock' };
   const pick = (stage, lib) => {
     stageRef.current = stage; libModeRef.current = !!lib; setNote('');
-    const nat = () => {
-      // v55.232: Kamera-App der Samsung-Tablets braucht viel Arbeitsspeicher; die Texterkennung (laeuft im Hintergrund) vorher freigeben, sonst beendet Android den Browser. Sie wird nach dem Foto neu aufgebaut.
-      try { if (!__psO2Job || __psO2Job.done) psO2Release(); } catch (e) {}
-      try { const r = lib ? libRef.current : camRef.current; r.value = ''; r.click(); } catch (e) {}
-    };
+    const nat = () => { try { const r = lib ? libRef.current : camRef.current; r.value = ''; r.click(); } catch (e) {} };
     if (lib || !ownCam || !psO2CamSupported()) { nat(); return; }
     psO2CamOpen({ label: CAM_LABEL[stage] || '' }).then(res => {
       if (res === 'native') nat();
@@ -15096,7 +15091,6 @@ function PsO2Import({ onApply, onClose, initial }) {
     const files = Array.from(e.target.files || []);
     const file = files.find(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name || ''));
     if (!file) { if (files.length) setNote('Bitte ein Foto auswählen (kein PDF).'); return; }
-    try { psO2Warm(); } catch (e) {} // v55.232: Texterkennung neu aufbauen, waehrend das Foto geprueft wird
     if (alwaysCrop) { setCrop({ file, stage: stageRef.current }); return; }
     checkThenRead(file, stageRef.current);
   };
