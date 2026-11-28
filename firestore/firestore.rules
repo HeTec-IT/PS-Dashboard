@@ -31,9 +31,10 @@ service cloud.firestore {
     // Standort freigegeben: Profil-Filiale (users/{uid}.shopId = Shop-Kennung) + Zusatzfilialen, Springer/Admin alle
     function psaShopOk(shop) {
       let p = psaProfile();
-      return psaIsAdmin() || (psaActive() && shop is string && (psaAllShops()
-        || string(p.get('shopId', '')).lower() == shop
-        || shop in p.get('extraShopIds', []) || shop in p.get('allowedShopIds', [])));
+      // Reihenfolge wichtig: dokumentunabhängige Bedingungen zuerst (Abfragen ohne Standortfilter für Springer/Admin)
+      return psaIsAdmin() || (psaActive() && (psaAllShops() || (shop is string
+        && (string(p.get('shopId', '')).lower() == shop
+          || shop in p.get('extraShopIds', []) || shop in p.get('allowedShopIds', [])))));
     }
     // Suchindex-Eintrag: nur bekannte Felder (wie psIdxBuild in der App), Pflichtfelder mit Typ
     function psaIndexValid(d) {
@@ -46,7 +47,7 @@ service cloud.firestore {
       return exists(b) && get(b).data == request.resource.data && psaShopOk(request.resource.data.shopId);
     }
     function psaReadIdx(d) {
-      return psaIsAdmin() || (psaActive() && d.uid == request.auth.uid) || psaShopOk(d.shopId);
+      return psaIsAdmin() || psaShopOk(d.shopId) || (psaActive() && d.uid == request.auth.uid);
     }
 
     // Kundensuche: lesen nur für den eigenen/freigegebenen Standort (Kollegen desselben Standorts finden sich gegenseitig)
