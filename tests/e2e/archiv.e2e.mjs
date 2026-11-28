@@ -64,7 +64,7 @@ const submit = (pg, { typ = 'angebot', kennung = 'keinName', kunde = '', pdf = t
   const r = await T.submit(blob, name, betreff, { kunde: o.kunde, ruf: o.typ === 'abschluss' ? o.kennung : '' });
   return { ...r, error: r && r.error ? String(r.error.message || r.error) : undefined, name };
 }, { typ, kennung, kunde, pdf, broken });
-const qAll = pg => pg.evaluate(async qn => (await PSArchivQueue.queue(qn).all()).map(r => ({ id: r.archiveId, uid: r.uid, status: r.status, fileName: r.fileName, shopId: r.shopId, hasPdf: !!r.pdfBlob, sends: r.sends, indexed: !!r.indexed })), QN);
+const qAll = pg => pg.evaluate(async qn => (await PSArchivQueue.queue(qn).all()).map(r => ({ id: r.archiveId, uid: r.uid, status: r.status, fileName: r.fileName, shopId: r.shopId, hasPdf: !!r.pdfBlob, sends: r.sends, indexed: !!r.indexed, complete: !!r.complete, integrity: r.integrity || '', indexIssue: r.indexIssue || '' })), QN);
 const qUpd = (pg, id, patch) => pg.evaluate(async ([qn, i, p]) => PSArchivQueue.queue(qn).update(i, p), [QN, id, patch]);
 // Durchlauf; läuft gerade der Hintergrundlauf der App, wird gewartet und erneut ausgeführt (sonst alter Stand)
 const proc = pg => pg.evaluate(async qn => { const q = PSArchivQueue.queue(qn); let r; for (let i = 0; i < 3; i++) { r = await q.process(window.__psArchivQueueDeps()); } return r; }, QN);
@@ -85,7 +85,7 @@ const view = pg => pg.evaluate(async () => {
   const txt = div.textContent; ReactDOM.unmountComponentAtNode(div); div.remove(); return txt;
 });
 
-test(`Archivierung v3 E2E – ${BRAND} ${FILE}`, { timeout: 900000 }, async t => {
+test(`Archivierung V4 E2E – ${BRAND} ${FILE}`, { timeout: 900000 }, async t => {
   const T1 = await tablet(), T2 = await tablet(), T3 = await tablet();
   let mueller;
 
@@ -94,10 +94,16 @@ test(`Archivierung v3 E2E – ${BRAND} ${FILE}`, { timeout: 900000 }, async t =>
     fl.storeDelayMs = 1200;
     mueller = await submit(T1.pg, { kennung: 'Mueller', kunde: 'Max Mueller' });
     assert.equal(mueller.ok, true); assert.equal(mueller.status, 'handed');
+    assert.match(mueller.name, /Mueller--\d{4}[0-9a-z]{8}[_.]/, 'v4: Kennzeichen Uhrzeit + 8 Zufallszeichen');
     assert.match(await view(T1.pg), /Bestätigung ausstehend/);
     await T1.pg.waitForTimeout(1400); await proc(T1.pg);
     const q = await qAll(T1.pg);
-    assert.equal(q[0].status, 'verified'); assert.equal(q[0].hasPdf, false); assert.equal(q[0].indexed, true);
+    assert.equal(q[0].status, 'verified'); assert.equal(q[0].hasPdf, false); assert.equal(q[0].indexed, true); assert.equal(q[0].complete, true, 'v4: vollständig');
+    // v4: Sicherungskopie im Backend, Upload mit Integritätsdaten + Anmelde-Token, ohne Kundendaten im Konsolenprotokoll
+    assert.ok(await T1.pg.evaluate(([ns, id]) => !!firebase.__state().docs[ns + '|pdf_index_backup/' + id], [B.ns, sid(mueller.name)]), 'Sicherung vorhanden');
+    const pl = fl.payloads.find(x => x.archiveFileName === mueller.name);
+    assert.match(pl.sha256, /^[0-9a-f]{64}$/); assert.equal(pl.fileSize, pl.size, 'gesendete Größe = tatsächliche PDF-Größe');
+    assert.equal(pl.ownerUid, 'uidA'); assert.equal(pl.senderUid, 'uidA'); assert.equal(pl.idToken, 'fake-id-token-uidA'); assert.match(pl.archiveId, /^ar-/);
     assert.match(await view(T1.pg), /Erfolgreich archiviert[\s\S]*Mueller|Mueller[\s\S]*Erfolgreich archiviert/);
     const s = await search(T1.pg, 'Mueller');
     assert.deepEqual(s.items.map(x => x.fileName), [mueller.name]);
@@ -347,22 +353,71 @@ test(`Archivierung v3 E2E – ${BRAND} ${FILE}`, { timeout: 900000 }, async t =>
     await TA.pg.waitForSelector('text=Archivierungsquote', { timeout: 15000 });
     const txt = await TA.pg.evaluate(() => document.getElementById('diag').textContent);
     const all = Object.keys(backend.docs).filter(k => k.startsWith(B.ns + '|archiv_jobs/')).map(k => backend.docs[k]);
-    const ver = all.filter(j => j.status === 'verified').length;
-    const exp = (Math.round(ver / all.length * 1000) / 10).toLocaleString('de-DE') + ' %';
-    assert.ok(txt.includes('Archivierungsquote' + exp), 'Quote ' + exp + ' (' + ver + '/' + all.length + ') in: ' + txt.slice(txt.indexOf('Aufträge'), txt.indexOf('Aufträge') + 300));
+    const ver = all.filter(j => j.status === 'verified' && j.complete === true).length;
+    const fil = all.filter(j => j.status === 'verified').length;
+    const pc = n => (Math.round(n / all.length * 1000) / 10).toLocaleString('de-DE') + ' %';
+    assert.ok(txt.includes('Archivierungsquote (vollständig)' + pc(ver)), 'Quote ' + pc(ver) + ' (' + ver + '/' + all.length + ') in: ' + txt.slice(txt.indexOf('Aufträge'), txt.indexOf('Aufträge') + 300));
+    assert.ok(txt.includes('Ablagequote (SharePoint)' + pc(fil)));
     assert.match(txt, /Abgleich Auftrag/);
+    assert.match(txt, /Vollständig archiviert/); assert.match(txt, /Ablagequote/);
+    // v4: Admin stellt einen fehlenden Suchindex-Eintrag aus der Sicherung wieder her
+    const victim = Object.keys(backend.docs).find(k => k.startsWith(B.ns + '|pdf_index_backup/') && /netzweg/.test(k));
+    const vKey = victim.replace('|pdf_index_backup/', '|pdf_index/');
+    await TA.pg.evaluate(k => { delete firebase.__state().docs[k]; }, vKey);
+    await TA.pg.click('button:has-text("Suchindex analysieren")');
+    await TA.pg.waitForTimeout(800);
+    await TA.pg.click('button:has-text("Suchindex aus Sicherung wiederherstellen")');
+    await TA.pg.waitForSelector('text=/Suchindex-Einträge wiederhergestellt/', { timeout: 15000 });
+    const info = await TA.pg.evaluate(() => document.getElementById('diag').textContent.match(/\d+ Sicherungen geprüft · (\d+) Suchindex-Einträge wiederhergestellt/));
+    assert.ok(info && Number(info[1]) >= 1, 'mind. 1 wiederhergestellt: ' + (info && info[0]));
+    assert.ok(await TA.pg.evaluate(k => !!firebase.__state().docs[k], vKey), 'Eintrag wieder da');
     assert.deepEqual(TA.pg.errs, [], 'Skriptfehler Admin');
     await TA.ctx.close();
   });
 
-  await t.test('22: IndexedDB nicht nutzbar → Direktversand, ehrlich "übergeben", kein "erfolgreich"', async () => {
+  await t.test('22: IndexedDB nicht nutzbar → KEIN ungesicherter Direktversand, eindeutige Meldung, Vorgang bleibt offen', async () => {
     const T5 = await tablet();
     await T5.ctx.addInitScript(() => { const o = indexedDB.open.bind(indexedDB); indexedDB.open = (n, v) => (/ArchivQueue/.test(n) ? (() => { throw new Error('IDB kaputt (Test)'); })() : o(n, v)); });
     await login(T5.pg, 'uidB');
+    const n0 = fl.payloads.length;
+    const toasts = [];
+    await T5.pg.exposeFunction('__t5toast', x => toasts.push(x));
+    await T5.pg.evaluate(() => { const o = window.__psToast; window.__psToast = x => { window.__t5toast(x); if (o) o(x); }; });
     const r = await submit(T5.pg, { kennung: 'OhneIDB', kunde: 'Ohne IDB' });
-    assert.equal(r.ok, true); assert.equal(r.status, 'handed'); assert.notEqual(r.status, 'verified');
-    assert.ok(fl.payloads.some(p => p.archiveFileName === r.name));
+    assert.equal(r.ok, false); assert.equal(r.storageError, true);
+    assert.equal(fl.payloads.length, n0, 'nichts ungesichert gesendet');
+    assert.match(r.error, /Gerätespeicher nicht verfügbar/);
     await T5.ctx.close();
+  });
+
+  await t.test('V4: Suchindex weg, Ursprungs-Tablet nicht verfügbar → Kollege findet die Beratung über die Sicherung, Index wird zurückgeschrieben', async () => {
+    const key = B.ns + '|pdf_index/' + sid(mueller.name);
+    await pull(T1.pg);
+    delete backend.docs[key]; // zentral gelöscht; T1 (Anna) wird NICHT mehr benutzt
+    const T7 = await tablet();
+    await login(T7.pg, 'uidB'); await push(T7.pg);
+    await T7.pg.evaluate(k => { delete firebase.__state().docs[k]; }, key);
+    const s = await search(T7.pg, 'Mueller');
+    assert.deepEqual(s.items.map(x => x.fileName), [mueller.name], 'über die Sicherung gefunden');
+    await T7.pg.waitForTimeout(300);
+    const e = (await idx(T7.pg)).find(x => x.fileName === mueller.name);
+    assert.ok(e, 'Suchindex wiederhergestellt'); assert.equal(e.uid, 'uidA', 'Original-Zuordnung (Anna)'); assert.equal(e.shopId, SH.X); assert.ok(e.keys.length > 0);
+    await pull(T7.pg);
+    await T7.ctx.close();
+  });
+
+  await t.test('V4: Prüfflow liefert Dateigröße → Integrität "size"; abweichende Größe → fehlgeschlagen, keine Erfolgsmeldung', async () => {
+    fl.existsObjects = true;
+    const a = await submit(T1.pg, { kennung: 'Integer', kunde: 'Integer' });
+    await qUpd(T1.pg, a.archiveId, { lastVerifyAt: 0 }); await proc(T1.pg);
+    let x = (await qAll(T1.pg)).find(y => y.id === a.archiveId);
+    assert.equal(x.status, 'verified'); assert.equal(x.integrity, 'size');
+    fl.badSize = true;
+    const b = await submit(T1.pg, { kennung: 'Kaputtgross', kunde: 'Kaputt' });
+    await qUpd(T1.pg, b.archiveId, { lastVerifyAt: 0 }); await proc(T1.pg);
+    x = (await qAll(T1.pg)).find(y => y.id === b.archiveId);
+    assert.equal(x.status, 'failed'); assert.equal(x.integrity, 'mismatch'); assert.equal(x.hasPdf, true);
+    fl.badSize = false; fl.existsObjects = false;
   });
 
   await t.test('21: Service Worker – neue Cache-Version, Modul im Cache, alte Caches gelöscht', async () => {
@@ -376,9 +431,9 @@ test(`Archivierung v3 E2E – ${BRAND} ${FILE}`, { timeout: 900000 }, async t =>
       const keys = await caches.keys();
       const own = keys.find(k => /^pencil-(o2|tcr)-v\d+$/.test(k) && !/-v1$/.test(k));
       const c = await caches.open(own);
-      return { keys, mod: !!(await c.match('archive-queue.js?v=3')) };
+      return { keys, mod: !!(await c.match('archive-queue.js?v=4')) };
     });
-    assert.ok(r.mod, 'archive-queue.js?v=3 vorab im Cache: ' + r.keys);
+    assert.ok(r.mod, 'archive-queue.js?v=4 vorab im Cache: ' + r.keys);
     assert.ok(!r.keys.includes(BRAND === 'telekom' ? 'pencil-tcr-v1' : 'pencil-o2-v1'), 'alter eigener Cache entfernt: ' + r.keys);
     await T6.ctx.close();
   });

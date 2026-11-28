@@ -22,6 +22,11 @@
  *  - v3: Wiederholung mit Backoff + Jitter, Fehlerklassen (vorübergehend / Anmeldung / Eingriff nötig), PDF-Prüfung
  *    (%PDF … %%EOF, Größe, SHA-256), Warnungen (lange ausstehend, Speicher knapp), Selbstreparatur fehlender
  *    Suchindex-Einträge (nur eigene), zentrale Statusmeldung ohne Kundendaten (Archivierungsmonitor), Abgleich.
+ *  - v4: Zwei Stufen. "In SharePoint abgelegt" (verified) ≠ "vollständig archiviert" (complete). Vollständig erst, wenn
+ *    der Suchindex-Eintrag existiert, Mitarbeiter UND Standort stimmen und er über die Kundensuche auffindbar ist.
+ *    Reparatur über eine unveränderliche Sicherungskopie im zentralen Backend (pdf_index_backup) – unabhängig vom Tablet
+ *    des ursprünglichen Mitarbeiters. Integrität zusätzlich über Dateigröße / SHA-256, sofern der Prüfdienst sie liefert.
+ *    Dateikennzeichen: Uhrzeit + 8 Zufallszeichen (statt 3).
  *  - Unabhängig von Firebase: Versand, Prüfung und Index werden als Funktionen übergeben (Azure-/Entra-tauglich).
  *  - Technisches Protokoll ohne Kundendaten (archiveId, uid, Shop, Schritt, Status, Fehlercode, Versuch).
  *
@@ -30,7 +35,7 @@
 (function (root) {
   'use strict';
 
-  var SCHEMA_VERSION = 3;
+  var SCHEMA_VERSION = 4;
   var DB_NAME = 'PencilSellingArchivQueue';
   var STORE = 'outbox';
   var LOG_KEY = 'ps_archiv_log_v1';
@@ -91,10 +96,14 @@
     var d = new Date(typeof ms === 'number' ? ms : Date.now());
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   }
-  /** Kurzkennzeichen für den Dateinamen: Uhrzeit HHMM + 3 Zufallszeichen, z. B. "1415k7q". */
+  /**
+   * Kennzeichen für den Dateinamen: Uhrzeit HHMM + 8 Zufallszeichen (Krypto-Zufall), z. B. "1415k7q2m9xa".
+   * 36^8 ≈ 2,8 Billionen Möglichkeiten je Minute (v3: 3 Zeichen = 46.656). Nur [0-9a-z], kein "_" → Flow-Teile unverändert.
+   * Ältere Kennzeichen (4–12 Zeichen) werden weiter erkannt.
+   */
   function makeToken(ms, rnd) {
     var d = new Date(typeof ms === 'number' ? ms : Date.now());
-    return pad2(d.getHours()) + pad2(d.getMinutes()) + rand(3, rnd);
+    return pad2(d.getHours()) + pad2(d.getMinutes()) + rand(8, rnd);
   }
   /** Eindeutige Archivierungs-ID (lokal, auch Korrelations-ID im Protokoll). */
   function makeArchiveId(ms, rnd) {
@@ -163,7 +172,7 @@
     var c = String(code == null ? '' : code).toLowerCase();
     if (!c) return 'temporary';
     if (c === 'offline') return 'offline';
-    if (/^validation|nopdf|pdf-missing|pdf-invalid|forbidden-owner|not-found-in-archive/.test(c)) return 'admin';
+    if (/^validation|nopdf|pdf-missing|pdf-invalid|forbidden-owner|not-found-in-archive|integrity/.test(c)) return 'admin';
     if (/auth|401|403|unauthenticated|token/.test(c)) return 'auth';
     return 'temporary'; // timeout, aborterror, typeerror, network, 429, 500, 502, 503, 504, send-failed, unbekannt
   }
@@ -291,6 +300,38 @@
     return 'wait';
   }
 
+  /** v4: vollständig archiviert = in SharePoint bestätigt UND Suchindex korrekt (auffindbar, richtige Zuordnung). */
+  function isComplete(rec) { return !!rec && rec.status === STATUS.VERIFIED && rec.complete === true; }
+  /**
+   * v4: Bewertung einer Suchindex-Prüfung. check = { exists, uid, shopId, searchable, backup } (null = unbekannt).
+   * → { ok, issue }  issue: 'missing' | 'wrong-employee' | 'wrong-shop' | 'not-searchable' | ''
+   */
+  function judgeIndex(rec, check) {
+    if (!check) return { ok: false, issue: 'unknown' };
+    if (!check.exists) return { ok: false, issue: 'missing' };
+    if (String(check.uid || '') !== String(rec.uid || '')) return { ok: false, issue: 'wrong-employee' };
+    if (String(check.shopId || '').toLowerCase() !== String(rec.shopId || '').toLowerCase()) return { ok: false, issue: 'wrong-shop' };
+    if (check.searchable === false) return { ok: false, issue: 'not-searchable' };
+    return { ok: true, issue: '' };
+  }
+  /**
+   * v4: Integrität der Ablage. meta = { size, sha256 } vom Prüfdienst (optional).
+   * → 'sha256' (Prüfsumme gleich) | 'size' (Größe gleich, keine Prüfsumme) | 'name' (nur Dateiname bestätigt) | 'mismatch'
+   */
+  function judgeIntegrity(rec, meta) {
+    if (!meta) return 'name';
+    var lvl = 'name';
+    if (typeof meta.size === 'number' && meta.size > 0 && rec.fileSize) {
+      if (meta.size !== rec.fileSize) return 'mismatch';
+      lvl = 'size';
+    }
+    var sh = String(meta.sha256 || '').toLowerCase().replace(/^sha256:/, '');
+    if (sh && rec.checksum) {
+      if ('sha256:' + sh !== String(rec.checksum).toLowerCase()) return 'mismatch';
+      lvl = 'sha256';
+    }
+    return lvl;
+  }
   /** Ist ein Eintrag (noch) offen, d. h. weder bestätigt noch bewusst verworfen? */
   function isOpen(rec) { return !!rec && rec.status !== STATUS.VERIFIED && rec.status !== STATUS.DISCARDED; }
 
@@ -312,6 +353,7 @@
     add('pending-old', 'warn', recs.filter(function (r) { return (r.status === STATUS.PENDING || r.status === STATUS.SENDING) && now - (r.createdAt || now) > pol.warnPendingMs; }));
     add('unverified-old', 'warn', recs.filter(function (r) { return r.status === STATUS.HANDED && now - (r.handedAt || r.createdAt || now) > pol.warnUnverifiedMs; }));
     add('escalate', 'error', recs.filter(function (r) { return isOpen(r) && now - (r.createdAt || now) > pol.escalateMs; }));
+    add('not-complete', 'warn', recs.filter(function (r) { return r.status === STATUS.VERIFIED && !r.complete && now - (r.verifiedAt || now) > pol.warnPendingMs; }));
     if (storage && storage.quota > 0) {
       var free = storage.quota - (storage.usage || 0);
       if ((storage.usage || 0) / storage.quota >= pol.storageWarnRatio || free < pol.storageMinFreeBytes) {
@@ -349,6 +391,11 @@
       fileSize: Number(rec.fileSize) || 0,
       checksum: String(rec.checksum || ''),
       indexed: !!rec.indexed,
+      complete: rec.status === STATUS.VERIFIED && rec.complete === true,
+      completedAt: Number(rec.completedAt) || 0,
+      indexIssue: String(rec.indexIssue || ''),
+      backup: !!rec.backup,
+      integrity: String(rec.integrity || ''),
       verifyAvailable: rec.verifyAvailable === true ? true : rec.verifyAvailable === false ? false : null,
       pdfLocal: !!rec.pdfBlob,
       documentVersion: Number(rec.documentVersion) || 1,
@@ -378,8 +425,10 @@
    */
   function computeMetrics(jobs, now) {
     now = typeof now === 'number' ? now : Date.now();
-    var m = { total: 0, verified: 0, handed: 0, pending: 0, failed: 0, discarded: 0, noIndex: 0, retries: 0, avgDurationMs: 0, rate: null, lastVerifiedByShop: {}, lastSyncAt: 0, escalated: 0 };
-    var dur = 0, durN = 0;
+    // v4: verified = Datei in SharePoint bestätigt; complete = zusätzlich Suchindex korrekt und auffindbar.
+    //     rate = vollständig ÷ gestartet (Archivierungsquote), fileRate = abgelegt ÷ gestartet.
+    var m = { total: 0, verified: 0, complete: 0, handed: 0, pending: 0, failed: 0, discarded: 0, noIndex: 0, retries: 0, avgDurationMs: 0, avgCompleteMs: 0, rate: null, fileRate: null, lastVerifiedByShop: {}, lastSyncAt: 0, escalated: 0, integrity: { sha256: 0, size: 0, name: 0, mismatch: 0 }, verifyAvailable: null };
+    var dur = 0, durN = 0, cdur = 0, cdurN = 0, lastVA = 0;
     (jobs || []).forEach(function (j) {
       if (!j) return;
       m.total++;
@@ -390,7 +439,11 @@
         case STATUS.DISCARDED: m.discarded++; break;
         default: m.pending++; // sending, pending, unbekannt
       }
-      if (j.status === STATUS.VERIFIED && !j.indexed) m.noIndex++;
+      if (j.status === STATUS.VERIFIED && j.complete === true) m.complete++;
+      if (j.status === STATUS.VERIFIED && j.complete !== true) m.noIndex++;
+      if (j.status === STATUS.VERIFIED && j.complete === true && j.completedAt && j.createdAt && j.completedAt >= j.createdAt) { cdur += j.completedAt - j.createdAt; cdurN++; }
+      if (j.integrity && m.integrity[j.integrity] !== undefined) m.integrity[j.integrity]++;
+      if ((j.verifyAvailable === true || j.verifyAvailable === false) && (j.updatedAt || 0) >= lastVA) { lastVA = j.updatedAt || 0; m.verifyAvailable = j.verifyAvailable; }
       m.retries += Math.max(0, (j.sends || 0) - 1) + (j.manualRetries || 0);
       if (j.status === STATUS.VERIFIED && j.verifiedAt && j.createdAt && j.verifiedAt >= j.createdAt) { dur += j.verifiedAt - j.createdAt; durN++; }
       if (j.status === STATUS.VERIFIED && j.shopId && (j.verifiedAt || 0) > (m.lastVerifiedByShop[j.shopId] || 0)) m.lastVerifiedByShop[j.shopId] = j.verifiedAt;
@@ -399,7 +452,9 @@
       if (isOpen(j) && now - (j.createdAt || now) > POLICY.escalateMs) m.escalated++;
     });
     m.avgDurationMs = durN ? Math.round(dur / durN) : 0;
-    m.rate = m.total ? m.verified / m.total : null;
+    m.avgCompleteMs = cdurN ? Math.round(cdur / cdurN) : 0;
+    m.rate = m.total ? m.complete / m.total : null;
+    m.fileRate = m.total ? m.verified / m.total : null;
     return m;
   }
 
@@ -435,9 +490,10 @@
       var e = idxBy.get(key);
       var old = now - (j.handedAt || j.createdAt || now) >= pol.verifyGraceMs;
       if (sp.has(key) && sp.get(key) === false && old && j.status !== STATUS.PENDING && j.status !== STATUS.SENDING) add('job-missing-pdf', 'error', j, e, j.pdfLocal ? 'owner-device' : 'admin');
-      if (sp.get(key) === true && !e) add('pdf-no-index', 'warn', j, null, 'owner-device');
-      if (j.status === STATUS.VERIFIED && !e && !sp.has(key)) add('verified-not-searchable', 'warn', j, null, 'owner-device');
-      if (e && e.hasKeys === false && j.status === STATUS.VERIFIED) add('verified-not-searchable', 'warn', j, e, 'admin');
+      if (sp.get(key) === true && !e) add('pdf-no-index', 'warn', j, null, 'backup');
+      if (j.status === STATUS.VERIFIED && !e && !sp.has(key)) add('verified-not-searchable', 'warn', j, null, 'backup');
+      if (e && e.hasKeys === false && j.status === STATUS.VERIFIED) add('verified-not-searchable', 'warn', j, e, 'backup');
+      if (j.integrity === 'mismatch') add('integrity-mismatch', 'error', j, e, 'admin');
       if (e && e.shopId && j.shopId && e.shopId !== j.shopId) add('wrong-shop', 'error', j, e, 'admin');
       if (e && e.uid && j.uid && e.uid !== j.uid) add('wrong-employee', 'error', j, e, 'admin');
     });
@@ -456,7 +512,8 @@
   var LABEL = {
     sending: 'Archivierung läuft',
     handed: 'An Archiv übergeben – Bestätigung ausstehend',
-    verified: 'Erfolgreich archiviert',
+    verified: 'In SharePoint abgelegt – Suchindex wird geprüft',
+    complete: 'Erfolgreich archiviert',
     pending: 'Lokal gesichert – Versand ausstehend',
     failed: 'Archivierung fehlgeschlagen – Eingriff erforderlich',
     discarded: 'Bewusst verworfen'
@@ -582,7 +639,7 @@
     var inflight = {}; // archiveId → true, solange in DIESEM Fenster ein Versand läuft (keine Doppelübertragung)
 
     // Felder, deren Änderung zentral gemeldet wird (Monitor). Reine Prüf-Zeitstempel lösen keine Meldung aus.
-    var REV_FIELDS = ['status', 'sends', 'pendingRetries', 'manualRetries', 'errorKind', 'lastError', 'indexed', 'verifyAvailable', 'pdfRemoved', 'blockedReason'];
+    var REV_FIELDS = ['status', 'sends', 'pendingRetries', 'manualRetries', 'errorKind', 'lastError', 'indexed', 'verifyAvailable', 'pdfRemoved', 'blockedReason', 'complete', 'indexIssue', 'backup', 'integrity'];
     var IMMUTABLE = ['archiveId', 'uid', 'email', 'employeeName', 'shopId', 'createdAt', 'fileName', 'consultationId', 'createdByUserId', 'fileKey', 'checksum', 'fileSize'];
 
     function upd(id, patch) {
@@ -634,8 +691,10 @@
     var createChain = Promise.resolve();
     // Datensparsamkeit: nach Bestätigung (PDF gelöscht) und vorhandenem Suchindex-Eintrag werden auch Kundenname und
     // Rufnummer aus dem lokalen Eintrag entfernt – angezeigt wird dann aus dem Suchindex.
+    // v4: erst wenn vollständig archiviert UND eine Sicherungskopie des Suchindex-Eintrags im Backend liegt – sonst gingen
+    //     Name/Nummer für eine spätere Reparatur verloren (Abschluss: Kundenname steht nicht im Dateinamen).
     function minimize(r) {
-      if (!r || r.status !== STATUS.VERIFIED || !r.indexed || (!r.kunde && !r.ruf)) return r;
+      if (!r || !isComplete(r) || !r.backup || (!r.kunde && !r.ruf)) return r;
       return upd(r.archiveId, { kunde: '', ruf: '' });
     }
     function mayAct(actor, r) { return !!actor && (actor.uid === r.uid || !!actor.isAdmin); }
@@ -728,7 +787,8 @@
        *   send: rec => Promise<{ok, error?, code?}>,     Übergabe an den Archiv-Flow
        *   verify: names => Promise<{available, found:Set<id>}>,
        *   recordIndex: rec => Promise<bool>,             Suchindex-Eintrag mit uid/Shop DES EIGENTÜMERS
-       *   indexExists: rec => Promise<bool|null>,        (optional) Suchindex-Eintrag vorhanden? null = unbekannt
+       *   indexCheck: rec => Promise<{exists,uid,shopId,searchable,backup}|null>  (v4) Suchindex prüfen (null = unbekannt)
+       *   restoreIndex: rec => Promise<bool>,           (v4) Suchindex-Eintrag aus der Sicherung (pdf_index_backup) wiederherstellen
        *   syncJob: summary => Promise<bool>,             (optional) Statusmeldung an den zentralen Monitor (ohne Kundendaten)
        *   onEvent: ({type, rec}) => void
        * }
@@ -810,15 +870,67 @@
       var found = (v && v.found) || new Set();
       var avail = !!(v && v.available);
       var t = clock();
-      if (avail && found.has(idOf(rec.fileName))) {
-        log({ archiveId: rec.archiveId, uid: rec.uid, shopId: rec.shopId, step: 'verify', status: STATUS.VERIFIED, attempt: rec.sends });
-        return upd(rec.archiveId, { status: STATUS.VERIFIED, verifiedAt: t, durationMs: t - (rec.createdAt || t), verifyAvailable: true, lastVerifyOk: true, lastVerifyAt: t, pdfBlob: null, pdfRemoved: true, lastError: '', errorKind: '' }).then(function (r) {
+      var id = idOf(rec.fileName);
+      if (avail && found.has(id)) {
+        // v4: Integrität – Dateigröße und (falls vom Prüfdienst geliefert) SHA-256 müssen zur gesendeten PDF passen
+        var integ = judgeIntegrity(rec, v.meta && typeof v.meta.get === 'function' ? v.meta.get(id) : null);
+        if (integ === 'mismatch') {
+          log({ archiveId: rec.archiveId, uid: rec.uid, shopId: rec.shopId, step: 'verify', status: STATUS.FAILED, code: 'integrity-mismatch', attempt: rec.sends });
+          return upd(rec.archiveId, failPatch('integrity-mismatch', { blockedReason: 'integrity', integrity: 'mismatch', verifyAvailable: true, lastVerifyOk: true, lastVerifyAt: t })).then(function (r) { if (stats) stats.failed++; emit(deps, 'failed', r); return r; });
+        }
+        log({ archiveId: rec.archiveId, uid: rec.uid, shopId: rec.shopId, step: 'verify', status: STATUS.VERIFIED, code: 'integrity:' + integ, attempt: rec.sends });
+        // PDF wird erst gelöscht, wenn die Ablage bestätigt ist (unverändert); Kundendaten bleiben bis "vollständig" + Sicherung
+        return upd(rec.archiveId, { status: STATUS.VERIFIED, verifiedAt: t, durationMs: t - (rec.createdAt || t), verifyAvailable: true, lastVerifyOk: true, lastVerifyAt: t, pdfBlob: null, pdfRemoved: true, lastError: '', errorKind: '', integrity: integ, complete: false, lastIndexCheckAt: 0 }).then(function (r) {
           if (stats) stats.verified++;
           emit(deps, 'verified', r);
-          return minimize(r);
+          return r;
         });
       }
       return upd(rec.archiveId, { lastVerifyAt: t, lastVerifyOk: avail, verifyAvailable: avail ? true : (rec.verifyAvailable === true ? true : false) });
+    }
+
+    /**
+     * v4: Vollständigkeit eines in SharePoint bestätigten Eintrags prüfen und – nur sicher – reparieren.
+     *  1) Suchindex korrekt → complete (Meldung "complete" an den Eigentümer); fehlt die Sicherungskopie und ist dies der
+     *     Eigentümer, wird der Eintrag (mit Sicherung) neu geschrieben.
+     *  2) fehlt/fehlerhaft → Wiederherstellung aus der unveränderlichen Sicherung (jeder berechtigte Mitarbeiter des Standorts),
+     *     sonst – nur Eigentümer – neu schreiben. Eine falsche Zuordnung wird nie aus lokalen Angaben überschrieben.
+     */
+    function completeCheck(deps, rec, stats, noRepair) {
+      var own = rec.uid === deps.uid;
+      return Promise.resolve().then(function () { return deps.indexCheck(rec); }).catch(function () { return null; }).then(function (chk) {
+        var t = clock();
+        if (!chk) return upd(rec.archiveId, { lastIndexCheckAt: t });
+        var j = judgeIndex(rec, chk);
+        if (j.ok) {
+          var was = rec.complete === true;
+          return upd(rec.archiveId, { complete: true, completedAt: rec.completedAt || t, indexed: true, indexIssue: '', backup: !!chk.backup, lastIndexCheckAt: t, indexCheckedAt: t }).then(function (r) {
+            if (!was) { log({ archiveId: rec.archiveId, uid: rec.uid, shopId: rec.shopId, step: 'complete', status: STATUS.VERIFIED }); emit(deps, 'complete', r); }
+            if (!chk.backup && own && deps.recordIndex && (r.kunde || r.ruf || !r.backup)) {
+              return Promise.resolve().then(function () { return deps.recordIndex(r); }).catch(function () { return false; }).then(function () { return r; });
+            }
+            return minimize(r);
+          });
+        }
+        log({ archiveId: rec.archiveId, uid: rec.uid, shopId: rec.shopId, step: 'index-check', status: STATUS.VERIFIED, code: j.issue });
+        var repair = Promise.resolve(false);
+        if (noRepair) repair = Promise.resolve('skip');
+        else if (chk.backup && deps.restoreIndex) repair = Promise.resolve().then(function () { return deps.restoreIndex(rec); }).catch(function () { return false; });
+        return repair.then(function (ok) {
+          if (ok === 'skip') return '';
+          if (ok) return 'backup';
+          if (own && deps.recordIndex && j.issue !== 'wrong-employee') return Promise.resolve().then(function () { return deps.recordIndex(rec); }).catch(function () { return false; }).then(function (x) { return x ? 'owner' : ''; });
+          return '';
+        }).then(function (how) {
+          if (how) { if (stats) stats.indexRepaired++; log({ archiveId: rec.archiveId, uid: rec.uid, shopId: rec.shopId, step: 'index-repair', status: STATUS.VERIFIED, code: how + ':' + j.issue }); }
+          var wasC = rec.complete === true;
+          return upd(rec.archiveId, { complete: false, indexIssue: j.issue, lastIndexCheckAt: t, indexCheckedAt: t, indexRepairs: (rec.indexRepairs || 0) + (how ? 1 : 0), backup: !!chk.backup }).then(function (r) {
+            if (wasC && !how) emit(deps, 'incomplete', r);
+            // nach erfolgreicher Reparatur sofort nachprüfen (ohne erneute Reparatur) – "vollständig" nur mit echtem Befund
+            return how ? completeCheck(deps, r, stats, true) : r;
+          });
+        });
+      });
     }
 
     function runProcess(deps) {
@@ -865,21 +977,19 @@
               return Promise.resolve().then(function () { return deps.recordIndex(rec); }).catch(function () { return false; }).then(function (ok) { if (ok) return upd(rec.archiveId, { indexed: true, indexCheckedAt: clock() }).then(minimize); });
             });
           }
-          // Selbstreparatur: eigener bestätigter Eintrag, Suchindex-Eintrag fehlt inzwischen (gelöscht/überschrieben) → neu schreiben
-          if (act === 'done' && own && rec.status === STATUS.VERIFIED && rec.indexed && deps.indexExists && deps.recordIndex && online &&
-              now - (rec.indexCheckedAt || 0) >= pol.indexCheckEveryMs && indexChecks < pol.perRunLimit) {
-            indexChecks++;
-            chain = chain.then(function () {
-              return Promise.resolve().then(function () { return deps.indexExists(rec); }).catch(function () { return null; }).then(function (ex) {
-                if (ex === true) return upd(rec.archiveId, { indexCheckedAt: clock() });
-                if (ex !== false) return null; // unbekannt (z. B. keine Verbindung) → später erneut
-                log({ archiveId: rec.archiveId, uid: rec.uid, shopId: rec.shopId, step: 'index-repair', status: rec.status, code: 'missing' });
-                return Promise.resolve().then(function () { return deps.recordIndex(rec); }).catch(function () { return false; }).then(function (ok) {
-                  if (ok) stats.indexRepaired++;
-                  return upd(rec.archiveId, { indexed: !!ok, indexCheckedAt: clock(), indexRepairs: (rec.indexRepairs || 0) + 1 });
-                });
+          // v4: Vollständigkeit prüfen (Suchindex vorhanden, richtige Zuordnung, auffindbar) und ggf. reparieren.
+          //     Auch für Einträge anderer Mitarbeiter dieses Geräts: Wiederherstellung aus der Sicherung ist für jeden
+          //     berechtigten Mitarbeiter des Standorts erlaubt (Regeln), nie mit fremder Zuordnung.
+          if (rec.status === STATUS.VERIFIED && act !== 'purge' && deps.indexCheck && online && indexChecks < pol.perRunLimit) {
+            var due = rec.complete
+              ? now - (rec.indexCheckedAt || 0) >= pol.indexCheckEveryMs
+              : now - (rec.lastIndexCheckAt || 0) >= (now - (rec.verifiedAt || now) > pol.verifySlowAfterMs ? pol.verifySlowEveryMs : pol.verifyEveryMs);
+            if (due) {
+              indexChecks++;
+              chain = chain.then(function () { return store.get(rec.archiveId); }).then(function (cur) {
+                return cur && cur.status === STATUS.VERIFIED ? completeCheck(deps, cur, stats) : null;
               });
-            });
+            }
           }
         });
         // 2) Ablage prüfen (gebündelt: EIN Aufruf für bis zu 40 Dateien)
@@ -890,7 +1000,10 @@
             return toVerify.reduce(function (p, rec) {
               return p.then(function () { return store.get(rec.archiveId); }).then(function (cur) {
                 if (!cur || cur.status !== STATUS.HANDED) return null; // inzwischen anders erledigt
-                return applyVerify(deps, cur, v, stats);
+                return applyVerify(deps, cur, v, stats).then(function (r) {
+                  // v4: frisch abgelegt → Vollständigkeit gleich im selben Durchlauf prüfen
+                  return r && r.status === STATUS.VERIFIED && deps.indexCheck ? completeCheck(deps, r, stats) : r;
+                });
               });
             }, Promise.resolve());
           });
@@ -927,11 +1040,16 @@
     api.verifyNow = function (id, deps) {
       return store.get(id).then(function (rec) {
         if (!rec) return null;
-        if (rec.status === STATUS.VERIFIED) return rec;
+        var finish = function (r) {
+          // v4: direkt nach der Ablage auch die Vollständigkeit prüfen (Anzeige "Erfolgreich archiviert" erst danach)
+          if (r && r.status === STATUS.VERIFIED && !r.complete && deps && deps.indexCheck) return completeCheck(deps, r, null);
+          return r;
+        };
+        if (rec.status === STATUS.VERIFIED) return finish(rec);
         if (rec.status !== STATUS.HANDED || !deps || !deps.verify) return rec;
         return Promise.resolve().then(function () { return deps.verify([rec.fileName]); }).catch(function () { return { available: false, found: new Set() }; }).then(function (v) {
           return applyVerify(deps, rec, v, null);
-        });
+        }).then(finish);
       });
     };
     /** Einen einzelnen Eintrag sofort senden (erster Versuch direkt beim Archivieren). */
@@ -964,6 +1082,9 @@
     checkPdf: checkPdf,
     nextAction: nextAction,
     isOpen: isOpen,
+    isComplete: isComplete,
+    judgeIndex: judgeIndex,
+    judgeIntegrity: judgeIntegrity,
     backoffDelay: backoffDelay,
     classifyError: classifyError,
     alerts: alerts,

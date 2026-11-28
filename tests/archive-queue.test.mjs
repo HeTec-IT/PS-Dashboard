@@ -56,7 +56,7 @@ test('Lokales Datum: Monats- und Jahreswechsel (kein UTC-Versatz)', () => {
   assert.equal(Q.localDate(new Date(2027, 0, 1, 0, 1).getTime()), '2027-01-01');
   assert.equal(Q.localDate(new Date(2026, 10, 30, 23, 30).getTime()), '2026-11-30');
   assert.equal(Q.localDate(new Date(2026, 11, 1, 0, 30).getTime()), '2026-12-01');
-  assert.match(Q.makeToken(new Date(2027, 0, 1, 0, 5).getTime()), /^0005[0-9a-z]{3}$/);
+  assert.match(Q.makeToken(new Date(2027, 0, 1, 0, 5).getTime()), /^0005[0-9a-z]{8}$/); // v4: 8 Zufallszeichen
 });
 
 test('Validierung vor dem Versand', () => {

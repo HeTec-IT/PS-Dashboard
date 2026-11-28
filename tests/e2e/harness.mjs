@@ -46,7 +46,8 @@ const LOCAL = [
 ];
 
 export function flows() {
-  return { stored: new Set(), payloads: [], archiveDown: false, storeDelayMs: 0, v3Broken: false, v3NoExists: false, v3Calls: [] };
+  // existsObjects: Prüfflow liefert { name, size } (erweiterter Flow, V4-Integrität); badSize: Größe weicht ab
+  return { stored: new Set(), sizes: new Map(), payloads: [], archiveDown: false, storeDelayMs: 0, v3Broken: false, v3NoExists: false, v3Calls: [], existsObjects: false, badSize: false };
 }
 export const sid = n => String(n || '').toLowerCase().replace(/[^a-z0-9._+\-]/g, '_').slice(0, 180);
 
@@ -67,8 +68,10 @@ export async function context(browser, srv, brand, seed, fl, archiveFlowMatch) {
       if (fl.archiveDown) return route.abort('internetdisconnected');
       let p = {};
       try { p = JSON.parse(route.request().postData() || '{}'); } catch (e) {}
-      fl.payloads.push({ archiveFileName: p.archiveFileName, archiveSubject: p.archiveSubject, agent: p.agent, shop: p.shop, type: p.type, pdf: !!p.pdfBase64 });
+      const size = p.pdfBase64 ? Buffer.from(p.pdfBase64, 'base64').length : 0;
+      fl.payloads.push({ archiveFileName: p.archiveFileName, archiveSubject: p.archiveSubject, agent: p.agent, shop: p.shop, type: p.type, pdf: !!p.pdfBase64, size, archiveId: p.archiveId, fileSize: p.fileSize, sha256: p.sha256, ownerUid: p.ownerUid, senderUid: p.senderUid, idToken: p.idToken, key: p.key });
       const id = sid(p.archiveFileName);
+      fl.sizes.set(id, size);
       if (fl.storeDelayMs) setTimeout(() => fl.stored.add(id), fl.storeDelayMs); else fl.stored.add(id);
       return route.fulfill({ status: 202, body: '' });
     }
@@ -80,7 +83,8 @@ export async function context(browser, srv, brand, seed, fl, archiveFlowMatch) {
       if (fl.v3Broken) return route.fulfill({ status: 500, headers: h, body: JSON.stringify({ ok: false, error: 'server' }) });
       if (p.action === 'exists') {
         if (fl.v3NoExists) return route.fulfill({ status: 400, headers: h, body: JSON.stringify({ ok: false, error: 'unknown action' }) });
-        const found = (p.names || []).filter(n => fl.stored.has(sid(n)));
+        let found = (p.names || []).filter(n => fl.stored.has(sid(n)));
+        if (fl.existsObjects) found = found.map(n => ({ name: n, size: (fl.sizes.get(sid(n)) || 0) + (fl.badSize ? 1 : 0) }));
         return route.fulfill({ status: 200, headers: h, body: JSON.stringify({ ok: true, found }) });
       }
       if (p.action === 'list') return route.fulfill({ status: 200, headers: h, body: JSON.stringify({ ok: true, items: [...fl.stored].map((n, i) => ({ id: i + 1, name: n })), lastId: fl.stored.size, done: true }) });

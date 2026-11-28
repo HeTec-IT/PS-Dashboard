@@ -21,20 +21,33 @@ function rec(over = {}) {
 }
 /** Gemeinsame Attrappe: "SharePoint" (Set) + "Suchindex" (Map) wie das zentrale Backend, für mehrere Tablets. */
 function backend() {
-  const sp = new Set(), index = new Map(), jobs = new Map(), sent = [];
+  const sp = new Set(), index = new Map(), backupIdx = new Map(), jobs = new Map(), sent = [];
+  let spMeta = null; // v4: Map(id → {size, sha256}) – simuliert einen Prüfdienst, der Größe/Prüfsumme liefert
   let spDown = false, fbDown = false, sendFail = 0, verifyMode = 'ok', dropOnStore = false;
   const b = {
-    sp, index, jobs, sent,
+    sp, index, backupIdx, jobs, sent, setMeta: m => { spMeta = m; },
     set: o => { if ('spDown' in o) spDown = o.spDown; if ('fbDown' in o) fbDown = o.fbDown; if ('sendFail' in o) sendFail = o.sendFail; if ('verifyMode' in o) verifyMode = o.verifyMode; if ('dropOnStore' in o) dropOnStore = o.dropOnStore; },
     deps: (uid, online = () => true) => ({
       uid, online,
       send: async r => { if (sendFail > 0) { sendFail--; return { ok: false, code: 'timeout' }; } sent.push(r.fileName); if (!dropOnStore) sp.add(Q.idOf(r.fileName)); return { ok: true }; },
       verify: async names => {
         if (spDown || verifyMode === 'unavailable') return { available: false, found: new Set() };
-        return { available: true, found: new Set(names.map(Q.idOf).filter(n => sp.has(n))) };
+        return { available: true, found: new Set(names.map(Q.idOf).filter(n => sp.has(n))), meta: spMeta || undefined };
       },
-      recordIndex: async r => { if (fbDown) return false; index.set(Q.idOf(r.fileName), { uid: r.uid, shopId: r.shopId, fileName: r.fileName }); return true; },
-      indexExists: async r => (fbDown ? null : index.has(Q.idOf(r.fileName))),
+      // wie psIdxRecordArchive: Suchindex schreiben + unveränderliche Sicherung (nur anlegen, nie überschreiben)
+      recordIndex: async r => {
+        if (fbDown) return false;
+        const e = { uid: r.uid, shopId: r.shopId, fileName: r.fileName, keys: r.kunde ? ['n:' + r.kunde.slice(0, 3).toLowerCase()] : [] };
+        index.set(Q.idOf(r.fileName), e);
+        if (!backupIdx.has(Q.idOf(r.fileName))) backupIdx.set(Q.idOf(r.fileName), { ...e });
+        return true;
+      },
+      indexCheck: async r => {
+        if (fbDown) return null;
+        const e = index.get(Q.idOf(r.fileName));
+        return { exists: !!e, uid: e && e.uid, shopId: e && e.shopId, searchable: !e || e.keys.length > 0 || !r.kunde, backup: backupIdx.has(Q.idOf(r.fileName)) };
+      },
+      restoreIndex: async r => { if (fbDown) return false; const b = backupIdx.get(Q.idOf(r.fileName)); if (!b) return false; index.set(Q.idOf(r.fileName), { ...b }); return true; },
       syncJob: async s => { if (fbDown) return false; jobs.set(s.archiveId, { ...s, syncedAt: Date.now() }); return true; }
     })
   };
@@ -42,8 +55,8 @@ function backend() {
 }
 const mkQ = (c, store) => Q.createQueue({ store: store || Q.memoryStore(), now: c.now, useLocks: false, random: () => 0.5 });
 
-test('Modul v3: Grundwerte, keine Altersgrenze für unbestätigte PDFs mehr', () => {
-  assert.equal(Q.SCHEMA_VERSION, 3);
+test('Modul v3/v4: Grundwerte, keine Altersgrenze für unbestätigte PDFs mehr', () => {
+  assert.equal(Q.SCHEMA_VERSION, 4);
   assert.equal('keepUnverifiablePdfMs' in Q.POLICY, false, '7-Tage-Löschregel entfernt');
   assert.equal(S.DISCARDED, 'discarded');
   const h = { status: S.HANDED, handedAt: 0, verifyAvailable: false, pdfBlob: pdf(), lastVerifyAt: 0 };
@@ -62,7 +75,8 @@ test('1: Mitarbeiter A archiviert → bestätigt, Index mit uid A + Standort, Me
   c.adv(61000); await q.process(be.deps('uidA'));
   const v = await q.get(r.archiveId);
   assert.equal(v.status, S.VERIFIED); assert.ok(v.verifiedAt >= v.createdAt); assert.ok(v.durationMs >= 0);
-  assert.deepEqual(be.index.get(Q.idOf(r.fileName)), { uid: 'uidA', shopId: 'crailsheim', fileName: r.fileName });
+  assert.equal(v.complete, true, 'v4: vollständig (Datei + Suchindex + Zuordnung)'); assert.equal(v.backup, true);
+  assert.deepEqual(be.index.get(Q.idOf(r.fileName)), { uid: 'uidA', shopId: 'crailsheim', fileName: r.fileName, keys: ['n:max'] });
   assert.equal(v.lastError, '');
 });
 
@@ -98,9 +112,7 @@ test('5b: Kennzeichen-Kollisionen – 4 Tablets × 50 Archivierungen in derselbe
   const t0 = Date.UTC(2026, 10, 28, 10, 0);
   const names = new Set();
   for (let i = 0; i < 200; i++) names.add(Q.uniqueFileName('PENCIL_keinName_Crailsheim_Angebot_2026-11-28.pdf', Q.makeToken(t0)));
-  // 3 Zufallszeichen (46.656 Möglichkeiten je Minute): bei 200 Namen ist eine Kollision möglich, aber selten.
-  // Schutz vor Folgen einer Kollision: Duplikatprüfung je Gerät + archiveId + fileKey; Test sichert nur Größenordnung.
-  assert.ok(names.size >= 197, 'Kollisionen sehr selten: ' + names.size);
+  assert.equal(names.size, 200, 'v4: 8 Zufallszeichen');
 });
 
 test('6: zwei Mitarbeiter, dieselbe Kundenkennung/Nummer → zwei getrennte Archivierungen mit eigener Zuordnung', async () => {
@@ -191,20 +203,97 @@ test('12b: Prüfdienst kurzzeitig gestört (keine Antwort) → KEIN Neuversand o
   assert.equal((await q.get(r.archiveId)).status, S.HANDED);
 });
 
-test('13: PDF vorhanden, Suchindex fehlt (später gelöscht/überschrieben) → Gerät des Eigentümers repariert automatisch', async () => {
+test('13: PDF vorhanden, Suchindex fehlt → Wiederherstellung aus der zentralen Sicherung (auch durch Kollegen-Tablet)', async () => {
+  const c = clock(); const be = backend(); const store = Q.memoryStore(); const q = mkQ(c, store);
+  const r = await q.create(rec());
+  await q.sendNow(r.archiveId, be.deps('uidA')); c.adv(61000); await q.process(be.deps('uidA'));
+  let x = await q.get(r.archiveId);
+  assert.equal(x.complete, true); assert.equal(x.kunde, '', 'erst nach Sicherung minimiert');
+  be.index.delete(Q.idOf(r.fileName)); // Index-Eintrag weg (gelöscht/überschrieben)
+  c.adv(7 * H);
+  // Wiederherstellung läuft auch unter Anmeldung eines Kollegen am selben Gerät – mit den ORIGINALDATEN aus der Sicherung
+  const st = await q.process(be.deps('uidB'));
+  assert.equal(st.indexRepaired, 1);
+  assert.deepEqual(be.index.get(Q.idOf(r.fileName)), be.backupIdx.get(Q.idOf(r.fileName)));
+  assert.equal(be.index.get(Q.idOf(r.fileName)).uid, 'uidA'); assert.deepEqual(be.index.get(Q.idOf(r.fileName)).keys, ['n:max'], 'Name bleibt suchbar, obwohl lokal entfernt');
+  x = await q.get(r.archiveId); assert.equal(x.complete, true, 'nach Reparatur sofort nachgeprüft: wieder vollständig'); assert.equal(x.indexIssue, '');
+  assert.ok(Q.readLog().some(l => l.step === 'index-repair' && l.archiveId === r.archiveId && l.code === 'backup:missing'));
+});
+
+test('13b: Suchindex mit falschem Standort / falschem Mitarbeiter → nicht vollständig, aus Sicherung korrigiert', async () => {
   const c = clock(); const be = backend(); const q = mkQ(c);
   const r = await q.create(rec());
   await q.sendNow(r.archiveId, be.deps('uidA')); c.adv(61000); await q.process(be.deps('uidA'));
-  assert.equal((await q.get(r.archiveId)).status, S.VERIFIED);
-  be.index.delete(Q.idOf(r.fileName)); // Index-Eintrag weg
-  c.adv(7 * H);
-  const st = await q.process(be.deps('uidA'));
-  assert.equal(st.indexRepaired, 1);
-  assert.equal(be.index.get(Q.idOf(r.fileName)).uid, 'uidA', 'mit uid des Eigentümers, nie eines anderen');
-  // fremder Benutzer repariert nicht (Zuordnung)
-  be.index.delete(Q.idOf(r.fileName)); c.adv(7 * H);
-  await q.process(be.deps('uidB'));
-  assert.equal(be.index.has(Q.idOf(r.fileName)), false);
+  be.index.set(Q.idOf(r.fileName), { ...be.index.get(Q.idOf(r.fileName)), shopId: 'aalen' });
+  c.adv(7 * H); await q.process(be.deps('uidA'));
+  assert.ok(Q.readLog().some(l => l.step === 'index-repair' && l.archiveId === r.archiveId && l.code === 'backup:wrong-shop'));
+  assert.equal(be.index.get(Q.idOf(r.fileName)).shopId, 'crailsheim'); assert.equal((await q.get(r.archiveId)).complete, true);
+  be.index.set(Q.idOf(r.fileName), { ...be.index.get(Q.idOf(r.fileName)), uid: 'uidX' });
+  c.adv(7 * H); await q.process(be.deps('uidA'));
+  assert.ok(Q.readLog().some(l => l.step === 'index-repair' && l.archiveId === r.archiveId && l.code === 'backup:wrong-employee'));
+  assert.equal(be.index.get(Q.idOf(r.fileName)).uid, 'uidA');
+  // ohne Sicherung wird eine fremde Zuordnung NICHT aus lokalen Angaben überschrieben
+  be.backupIdx.delete(Q.idOf(r.fileName));
+  be.index.set(Q.idOf(r.fileName), { ...be.index.get(Q.idOf(r.fileName)), uid: 'uidX' });
+  c.adv(7 * H); await q.process(be.deps('uidA'));
+  assert.equal(be.index.get(Q.idOf(r.fileName)).uid, 'uidX'); const z = await q.get(r.archiveId);
+  assert.equal(z.complete, false); assert.equal(z.indexIssue, 'wrong-employee');
+});
+
+test('V4: "In SharePoint abgelegt" ≠ "vollständig archiviert" – ohne Suchindex keine Erfolgsquote', async () => {
+  const c = clock(); const be = backend(); const q = mkQ(c);
+  const r = await q.create(rec());
+  const d = { ...be.deps('uidA'), recordIndex: async () => false, restoreIndex: async () => false }; // Index lässt sich nicht schreiben
+  await q.sendNow(r.archiveId, d); c.adv(61000); await q.process(d);
+  const x = await q.get(r.archiveId);
+  assert.equal(x.status, S.VERIFIED); assert.equal(x.complete, false); assert.equal(x.indexIssue, 'missing');
+  assert.ok(x.kunde, 'Kundendaten bleiben lokal, bis die Reparatur gelingt');
+  const m = Q.computeMetrics([Q.jobSummary(x)]);
+  assert.equal(m.verified, 1); assert.equal(m.complete, 0); assert.equal(m.rate, 0); assert.equal(m.fileRate, 1);
+  c.adv(3 * H);
+  assert.ok((await q.alerts('uidA')).some(a => a.code === 'not-complete'));
+  // verifyNow (Anzeige direkt nach dem Archivieren) meldet erst nach Indexprüfung "vollständig"
+  const r2 = await q.create(rec({ fileName: NAME('Neu', 'Crailsheim', 'Angebot', '1111abcdefgh') }));
+  await q.sendNow(r2.archiveId, be.deps('uidA'));
+  const y = await q.verifyNow(r2.archiveId, be.deps('uidA'));
+  assert.equal(y.status, S.VERIFIED); assert.equal(y.complete, true);
+});
+
+test('5 (Integrität): Dateigröße / SHA-256 vom Prüfdienst müssen zur gesendeten PDF passen', async () => {
+  const c = clock(); const be = backend(); const q = mkQ(c);
+  const mk = async (kenn, meta) => {
+    const r = await q.create(rec({ fileName: NAME(kenn, 'Crailsheim', 'Angebot', '1200' + kenn.toLowerCase().padEnd(8, 'x').slice(0, 8)) }));
+    be.setMeta(new Map([[Q.idOf(r.fileName), meta(r)]]));
+    await q.sendNow(r.archiveId, be.deps('uidA')); c.adv(61000); await q.process(be.deps('uidA'));
+    return q.get(r.archiveId);
+  };
+  let x = await mk('Gross', r => ({ size: r.fileSize }));
+  assert.equal(x.integrity, 'size'); assert.equal(x.status, S.VERIFIED);
+  x = await mk('Sha', r => ({ size: r.fileSize, sha256: r.checksum.slice(7).toUpperCase() }));
+  assert.equal(x.integrity, 'sha256');
+  x = await mk('Falsch', r => ({ size: r.fileSize + 1 }));
+  assert.equal(x.status, S.FAILED); assert.equal(x.integrity, 'mismatch'); assert.equal(x.errorKind, 'admin'); assert.ok(x.pdfBlob, 'PDF bleibt für Nachweis/erneuten Versand');
+  x = await mk('Shafalsch', r => ({ size: r.fileSize, sha256: 'ab'.repeat(32) }));
+  assert.equal(x.integrity, 'mismatch');
+  be.setMeta(null);
+  x = await mk('Name', () => null);
+  assert.equal(x.integrity, 'name', 'Prüfdienst liefert nur Namen → ehrlich als "nur Name" gekennzeichnet');
+  assert.equal(Q.judgeIntegrity({ fileSize: 10, checksum: 'sha256:aa' }, { size: 10 }), 'size');
+});
+
+test('7: Kennzeichen mit 8 Zufallszeichen – 4 Tablets × 5.000 Archivierungen in derselben Minute ohne Kollision', () => {
+  const t0 = Date.UTC(2026, 10, 28, 10, 0);
+  const tk = Q.makeToken(t0);
+  assert.match(tk, /^\d{4}[0-9a-z]{8}$/);
+  const f = Q.uniqueFileName('PENCIL_keinName_Crailsheim_Angebot_2026-11-28.pdf', tk);
+  assert.equal(f.replace(/\.pdf$/, '').split('_').length, 5, 'Flow-Teile unverändert (kein zusätzliches "_")');
+  assert.equal(Q.fileToken(f), tk);
+  assert.equal(Q.kennungOf(f), 'keinName');
+  const names = new Set();
+  for (let i = 0; i < 20000; i++) names.add(Q.uniqueFileName('PENCIL_keinName_Crailsheim_Angebot_2026-11-28.pdf', Q.makeToken(t0)));
+  assert.equal(names.size, 20000);
+  // Altnamen mit 3er-Kennzeichen bleiben lesbar
+  assert.equal(Q.fileToken('PENCIL_Mueller--1415k7q_Aalen_Angebot_2026-11-27.pdf'), '1415k7q');
 });
 
 test('14/25: Abgleich erkennt Index ohne PDF, PDF ohne Index, falschen Standort, falschen Mitarbeiter, Dubletten', async () => {
@@ -239,7 +328,7 @@ test('15: Firebase vorübergehend nicht erreichbar → Archivierung läuft, Inde
   assert.ok(x.kunde, 'Kundendaten bleiben lokal, bis der Index geschrieben ist');
   be.set({ fbDown: false }); c.adv(61000); await q.process(be.deps('uidA'));
   x = await q.get(r.archiveId);
-  assert.equal(x.indexed, true); assert.equal(x.kunde, '', 'danach Datensparsamkeit');
+  assert.equal(x.indexed, true); assert.equal(x.complete, true); assert.equal(x.backup, true); assert.equal(x.kunde, '', 'danach Datensparsamkeit (Sicherung im Backend vorhanden)');
   assert.equal(be.jobs.get(r.archiveId).status, S.VERIFIED);
 });
 
@@ -311,10 +400,11 @@ test('24: Anmeldung auf einem anderen Tablet → zentrale Statusmeldung ist ger�
 
 test('27: Archivierungsquote = bestätigt / gestartet – Offenes, Fehlgeschlagenes, Verworfenes bleibt im Nenner', () => {
   const now = Date.UTC(2026, 10, 28, 12);
-  const j = (status, o = {}) => ({ archiveId: Math.random().toString(36), status, createdAt: now - H, verifiedAt: status === S.VERIFIED ? now - H + 60000 : 0, shopId: 'crailsheim', uid: 'uidA', indexed: true, sends: 1, type: 'angebot', ...o });
-  const jobs = [j(S.VERIFIED), j(S.VERIFIED, { sends: 2, shopId: 'aalen', verifiedAt: now - 1000 }), j(S.VERIFIED, { indexed: false }), j(S.HANDED), j(S.PENDING), j(S.FAILED, { sends: 3, manualRetries: 1 }), j(S.DISCARDED), j(S.SENDING, { createdAt: now - 4 * D })];
+  const j = (status, o = {}) => ({ archiveId: Math.random().toString(36), status, createdAt: now - H, verifiedAt: status === S.VERIFIED ? now - H + 60000 : 0, shopId: 'crailsheim', uid: 'uidA', indexed: true, complete: status === S.VERIFIED, sends: 1, type: 'angebot', ...o });
+  const jobs = [j(S.VERIFIED), j(S.VERIFIED, { sends: 2, shopId: 'aalen', verifiedAt: now - 1000 }), j(S.VERIFIED, { indexed: false, complete: false }), j(S.HANDED), j(S.PENDING), j(S.FAILED, { sends: 3, manualRetries: 1 }), j(S.DISCARDED), j(S.SENDING, { createdAt: now - 4 * D })];
   const m = Q.computeMetrics(jobs, now);
-  assert.equal(m.total, 8); assert.equal(m.verified, 3); assert.equal(m.rate, 3 / 8);
+  assert.equal(m.total, 8); assert.equal(m.verified, 3); assert.equal(m.complete, 2, 'v4: nur mit korrektem Suchindex');
+  assert.equal(m.rate, 2 / 8, 'Quote = vollständig ÷ gestartet'); assert.equal(m.fileRate, 3 / 8);
   assert.equal(m.pending, 2); assert.equal(m.handed, 1); assert.equal(m.failed, 1); assert.equal(m.discarded, 1); assert.equal(m.noIndex, 1);
   assert.equal(m.retries, 1 + 2 + 1); assert.equal(m.escalated, 1);
   assert.equal(m.lastVerifiedByShop.aalen, now - 1000);
@@ -383,6 +473,6 @@ test('21: Service-Worker-Cache und Skript-Version wurden für das Update erhöht
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const v = Number((/const CACHE = "pencil-[a-z0-9]+-v(\d+)"/.exec(sw) || [])[1]);
-  assert.ok(v >= 36, 'Cache-Version: ' + v);
-  assert.match(html, /archive-queue\.js\?v=3"/, 'Cache-Busting für das Modul');
+  assert.ok(v >= 37, 'Cache-Version: ' + v);
+  assert.match(html, /archive-queue\.js\?v=4"/, 'Cache-Busting für das Modul');
 });
