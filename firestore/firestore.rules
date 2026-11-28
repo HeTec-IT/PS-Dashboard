@@ -1,0 +1,110 @@
+rules_version = '2';
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Pencil Selling – Firestore-Regeln für Archivierung, Kundensuche und Archivierungsmonitor (V4, 28.11.2026)
+// Gilt für BEIDE Projekte: o2-pencil-selling und pencil-selling-telekom (gleiche Sammlungen, gleiche Profilfelder).
+//
+// EINSPIELEN: Diese Datei ist KEIN Ersatz für die gesamten bestehenden Regeln. In der Firebase-Konsole
+//   (Firestore → Regeln) den Abschnitt zwischen "BEGIN PENCIL ARCHIV" und "END PENCIL ARCHIV" INNERHALB von
+//   "match /databases/{database}/documents { … }" einfügen und dort vorhandene Blöcke für pdf_index, pdf_index_backup,
+//   archiv_jobs und users ERSETZEN (nicht doppelt). Alle anderen Blöcke (analytics, saved_offers, skip_limits, news, …)
+//   unverändert lassen. Achtung: Ein allgemeiner Block wie "match /{document=**} { allow read, write: if request.auth != null; }"
+//   hebt jede Einschränkung auf (Regeln werden ODER-verknüpft) – er muss entfernt bzw. auf andere Sammlungen begrenzt werden.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ───── BEGIN PENCIL ARCHIV ─────
+    function psaSignedIn() { return request.auth != null; }
+    function psaProfile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function psaTrue(v) { return v in [true, 'true', 1, '1', 'ja']; }
+    function psaIsAdmin() {
+      return psaSignedIn() && (request.auth.token.email == 'd.dasilva@hetec-gmbh.de' || psaProfile().get('role', '') == 'admin');
+    }
+    // freigegebener (aktiver) Mitarbeiter
+    function psaActive() { return psaSignedIn() && (psaIsAdmin() || psaTrue(psaProfile().get('active', false))); }
+    // Springer / Shopwechsel = alle Standorte (gleiche Profilfelder wie in der App)
+    function psaAllShops() {
+      let p = psaProfile();
+      return psaTrue(p.get('springer', false)) || psaTrue(p.get('isSpringer', false)) || psaTrue(p.get('shopwechsel', false))
+        || psaTrue(p.get('shopWechsel', false)) || psaTrue(p.get('allShops', false)) || psaTrue(p.get('canSwitchShop', false));
+    }
+    // Standort freigegeben: Profil-Filiale (users/{uid}.shopId = Shop-Kennung) + Zusatzfilialen, Springer/Admin alle
+    function psaShopOk(shop) {
+      let p = psaProfile();
+      return psaIsAdmin() || (psaActive() && shop is string && (psaAllShops()
+        || string(p.get('shopId', '')).lower() == shop
+        || shop in p.get('extraShopIds', []) || shop in p.get('allowedShopIds', [])));
+    }
+    // Suchindex-Eintrag: nur bekannte Felder (wie psIdxBuild in der App), Pflichtfelder mit Typ
+    function psaIndexValid(d) {
+      return d.keys().hasOnly(['fileName', 'typ', 'shopId', 'kunde', 'ruf', 'nsn', 'datum', 'agent', 'ts', 'keys', 'offerId', 'src', 'uid', 'v'])
+        && d.fileName is string && d.shopId is string && d.uid is string && d.ts is number && d.keys is list;
+    }
+    // Wiederherstellung: Eintrag ist eine EXAKTE Kopie der unveränderlichen Sicherung (Zuordnung bleibt original)
+    function psaIsBackupCopy(id) {
+      let b = /databases/$(database)/documents/pdf_index_backup/$(id);
+      return exists(b) && get(b).data == request.resource.data && psaShopOk(request.resource.data.shopId);
+    }
+    function psaReadIdx(d) {
+      return psaIsAdmin() || (psaActive() && d.uid == request.auth.uid) || psaShopOk(d.shopId);
+    }
+
+    // Kundensuche: lesen nur für den eigenen/freigegebenen Standort (Kollegen desselben Standorts finden sich gegenseitig)
+    match /pdf_index/{id} {
+      allow get: if psaActive() && (resource == null || psaReadIdx(resource.data));
+      allow list: if psaSignedIn() && psaReadIdx(resource.data);
+      allow create: if psaActive() && psaIndexValid(request.resource.data) && (
+        psaIsAdmin()
+        || (request.resource.data.uid == request.auth.uid && psaShopOk(request.resource.data.shopId))
+        || psaIsBackupCopy(id));
+      allow update: if psaActive() && psaIndexValid(request.resource.data) && (
+        psaIsAdmin()
+        || (resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid && psaShopOk(request.resource.data.shopId))
+        || psaIsBackupCopy(id));
+      // Mitarbeiter dürfen nur ihren eigenen Selbsttest-Eintrag entfernen (Systemprüfung)
+      allow delete: if psaIsAdmin() || (psaActive() && id.matches('_selftest_.*') && resource.data.uid == request.auth.uid);
+    }
+
+    // Unveränderliche Sicherung des Suchindex: nur anlegen, nie überschreiben; Löschen nur Admin
+    match /pdf_index_backup/{id} {
+      allow get: if psaActive() && (resource == null || psaReadIdx(resource.data));
+      allow list: if psaSignedIn() && psaReadIdx(resource.data);
+      allow create: if psaActive() && psaIndexValid(request.resource.data) && !id.matches('_selftest_.*') && (
+        psaIsAdmin() || (request.resource.data.uid == request.auth.uid && psaShopOk(request.resource.data.shopId)));
+      allow update: if false;
+      allow delete: if psaIsAdmin();
+    }
+
+    // Archivierungsmonitor: je Vorgang ein Dokument OHNE Kundendaten. Schreiben nur eigene, lesen alle nur Admin.
+    function psaJobValid(archiveId) {
+      let d = request.resource.data;
+      return d.archiveId == archiveId && d.uid is string && d.shopId is string
+        && !d.keys().hasAny(['kunde', 'ruf', 'nsn', 'fileName', 'email', 'subject', 'pdfBlob', 'pdfBase64', 'idToken']);
+    }
+    match /archiv_jobs/{archiveId} {
+      allow read: if psaIsAdmin() || (psaActive() && resource.data.uid == request.auth.uid);
+      allow create: if psaActive() && psaJobValid(archiveId) && request.resource.data.uid == request.auth.uid
+        && psaShopOk(request.resource.data.shopId);
+      allow update: if psaActive() && psaJobValid(archiveId) && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.shopId == resource.data.shopId
+        && request.resource.data.get('createdAt', 0) == resource.data.get('createdAt', 0);
+      allow delete: if psaIsAdmin();
+    }
+
+    // Profile: Standort, Rolle, Freigabe und Springer-Rechte ändert NUR der Admin – sonst wäre die Standortprüfung umgehbar.
+    match /users/{uid} {
+      allow read: if psaSignedIn() && (request.auth.uid == uid || psaIsAdmin());
+      allow create: if psaSignedIn() && request.auth.uid == uid && (
+        request.auth.token.email == 'd.dasilva@hetec-gmbh.de'
+        || (request.resource.data.get('role', 'verkaeufer') == 'verkaeufer'
+            && request.resource.data.get('active', false) == false
+            && request.resource.data.get('status', 'pending') == 'pending'
+            && !request.resource.data.keys().hasAny(['springer', 'isSpringer', 'shopwechsel', 'shopWechsel', 'allShops', 'canSwitchShop', 'extraShopIds', 'allowedShopIds'])));
+      allow update: if psaIsAdmin() || (psaSignedIn() && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'active', 'status', 'shopId', 'shop', 'extraShopIds', 'allowedShopIds', 'springer', 'isSpringer', 'shopwechsel', 'shopWechsel', 'allShops', 'canSwitchShop', 'brand', 'isTestUser']));
+      allow delete: if psaIsAdmin();
+    }
+    // ───── END PENCIL ARCHIV ─────
+  }
+}

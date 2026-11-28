@@ -1,0 +1,26 @@
+name: Firestore-Regeln testen
+# Testet firestore/firestore.rules im Firestore-Emulator (synthetische Daten, kein Zugriff auf echte Projekte).
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'firestore/**'
+      - '.github/workflows/firestore-regeln-test.yml'
+jobs:
+  regeln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: firestore
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm i --no-save --no-audit --no-fund firebase-tools@13 @firebase/rules-unit-testing@3 firebase@10
+      - run: npx firebase emulators:exec --only firestore --project demo-ps "node --test --test-reporter=spec rules.test.mjs"
