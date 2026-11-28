@@ -1100,7 +1100,7 @@
          Bei neuer Version: APP_VERSION unten hochsetzen. Fertig.
          ══════════════════════════════════════════════════════════════════════ -->
     <script>
-    window.APP_VERSION = '56.0-beta.6';
+    window.APP_VERSION = '56.0-beta.7';
     // ── v55.20: gemeinsame Helfer (Flacker-Fix / Wiederherstellung) ─────────
     // Frist der automatischen Wiederherstellung: EIN Wert fuer Pruefung UND Anzeige.
     window.__PS_RESTORE_WINDOW_MS = 5 * 60 * 1000;
@@ -1197,7 +1197,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <!-- FIX Archivierung: Archiv-Ausgang (eindeutige Archivierungen, Bestätigung aus SharePoint, kein Datenverlust) -->
-    <script src="archive-queue.js?v=1"></script>
+    <script src="archive-queue.js?v=3"></script>
     <!-- pdf-lib: Unterschrift in bestehendes Angebots-PDF stempeln (v51.4 "PDF finalisieren") -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
     <!-- pdf.js: PDF-Vorschau vor der Unterschrift (v51.5) -->
@@ -25798,6 +25798,71 @@ const PinLockModal = ({
 const PS_ARCHFAIL_KEY = 'ps_archfail_v1';
 const PS_ARCHOK_KEY = 'ps_archverified_v1';
 const PS_ARCH_ABLAGE_MIN = 20;
+// ── v3: Zentraler Archivierungsmonitor (Firestore "archiv_jobs"): je Archivierung EIN Dokument (Dokument-ID = archiveId)
+//    mit Status, Zeitpunkten, Versuchen, Fehlercode, Standort und Mitarbeiter – OHNE Kundendaten (kein Name, keine Nummer,
+//    kein Dateiname; Verknüpfung zum Suchindex über den pseudonymen Schlüssel fileKey). Schreiben nur eigene Vorgänge,
+//    Lesen nur Admins (Firestore-Regel, siehe docs/ARCHIVIERUNG-V3.md). Fehlt die Regel, läuft die App unverändert weiter.
+const PS_ARCH_JOBS_COLL = 'archiv_jobs';
+const PS_ARCH_BRAND = 'o2';
+const PS_ARCH_LS = 'ps_';
+const psArchDeviceId = () => {
+  try {
+    let d = localStorage.getItem(PS_ARCH_LS + 'archiv_device');
+    if (!d) { d = 'dev-' + (window.PSArchivQueue ? PSArchivQueue.makeArchiveId().slice(3) : Date.now().toString(36)); localStorage.setItem(PS_ARCH_LS + 'archiv_device', d); }
+    return d;
+  } catch (e) { return ''; }
+};
+const psArchTimeout = (p, ms) => {
+  let t;
+  return Promise.race([p, new Promise((_, rej) => { t = setTimeout(() => rej(Object.assign(new Error('timeout'), { code: 'timeout' })), ms); })]).finally(() => clearTimeout(t));
+};
+const psArchSyncJob = async s => {
+  try {
+    if (!s || !s.archiveId || !s.uid || String(s.uid) !== String(window.__PS_USER_UID || '')) return false; // nur eigene Vorgänge
+    if (Number(localStorage.getItem(PS_ARCH_LS + 'archjobs_denied') || 0) > Date.now()) return false; // Regel fehlt → 6 h Pause
+    const db = psIdxDb();
+    if (!db || psArchOffline()) return false;
+    const FV = window.firebase && firebase.firestore && firebase.firestore.FieldValue;
+    const doc = Object.assign({}, s, { brand: PS_ARCH_BRAND, deviceId: psArchDeviceId(), appVersion: String(window.APP_VERSION || ''), syncedAtMs: Date.now(), syncedAt: FV ? FV.serverTimestamp() : Date.now() });
+    await psArchTimeout(db.collection(PS_ARCH_JOBS_COLL).doc(String(s.archiveId)).set(doc, { merge: true }), 6000);
+    return true;
+  } catch (e) {
+    try { if (e && e.code === 'permission-denied') localStorage.setItem(PS_ARCH_LS + 'archjobs_denied', String(Date.now() + 6 * 3600000)); } catch (_) {}
+    return false;
+  }
+};
+// Suchindex-Eintrag einer eigenen, bestätigten Archivierung noch vorhanden? true/false, null = unbekannt (kein Netz o. Ä.)
+const psArchIndexExists = async rec => {
+  try {
+    const db = psIdxDb();
+    if (!db || psArchOffline() || !rec || !rec.fileName) return null;
+    const snap = await psArchTimeout(db.collection(PS_IDX_COLL).doc(psIdxId(rec.fileName)).get(), 6000);
+    return !!(snap && snap.exists);
+  } catch (e) { return null; }
+};
+// Warnungen (eigene Vorgänge): fehlgeschlagen, lange ausstehend, lange unbestätigt, Speicher knapp – je Art höchstens alle 6 h
+const PS_ARCH_ALERT_TEXT = {
+  failed: n => '\u274C ' + n + (n === 1 ? ' Archivierung ist' : ' Archivierungen sind') + ' fehlgeschlagen \u2013 PDF ist gesichert. Bitte unter Meine Statistik \u2192 Archiv erneut senden.',
+  'pending-old': n => '\u23F3 ' + n + (n === 1 ? ' Archivierung wartet' : ' Archivierungen warten') + ' seit \u00FCber 2 Stunden auf den Versand \u2013 bitte Internetverbindung pr\u00FCfen. PDFs sind gesichert.',
+  'unverified-old': n => '\uD83D\uDD0E ' + n + (n === 1 ? ' Archivierung ist' : ' Archivierungen sind') + ' seit \u00FCber 24 Stunden nicht best\u00E4tigt \u2013 wird im Archivierungsmonitor gemeldet. PDFs bleiben gesichert.',
+  'storage-low': () => '\uD83D\uDCBE Ger\u00E4tespeicher fast voll \u2013 bitte Speicher freigeben. Offene Archivierungen bleiben gesichert.'
+};
+const psArchAlertCheck = async () => {
+  try {
+    const uid = String(window.__PS_USER_UID || '');
+    if (!uid || !window.PSArchivQueue) return [];
+    const al = await PSArchivQueue.queue('o2').alerts(uid, await PSArchivQueue.storageInfo());
+    al.forEach(a => {
+      const txt = PS_ARCH_ALERT_TEXT[a.code];
+      if (!txt) return;
+      const k = PS_ARCH_LS + 'archiv_alert_' + uid + '_' + a.code;
+      if (Date.now() - Number(localStorage.getItem(k) || 0) < 6 * 3600000) return;
+      try { localStorage.setItem(k, String(Date.now())); } catch (e) {}
+      try { if (typeof window.__psToast === 'function') window.__psToast(txt(a.count)); } catch (e) {}
+    });
+    return al;
+  } catch (e) { return []; }
+};
 const psArchFailGet = () => {
   try {
     const a = JSON.parse(localStorage.getItem(PS_ARCHFAIL_KEY) || '[]');
@@ -25875,7 +25940,7 @@ const psArchIsoWeek = ms => {
 };
 const ArchivProtokollView = ({ heute, onAlle } = {}) => {
   const h = React.createElement;
-  const [st, setSt] = React.useState({ loading: true, rows: [], error: '', verifyAvailable: false });
+  const [st, setSt] = React.useState({ loading: true, rows: [], error: '', verifyAvailable: false, alerts: [] });
   const [openWeeks, setOpenWeeks] = React.useState({}); // Standard: alle Wochen eingeklappt
   const load = React.useCallback(async () => {
     setSt(x => ({ ...x, loading: true }));
@@ -25952,13 +26017,14 @@ const ArchivProtokollView = ({ heute, onAlle } = {}) => {
       verifyAvailable = true; // alles bereits frueher bestaetigt
     }
     const rows = [];
-    const OBST = { sending: 'q_sending', handed: 'q_verifying', pending: 'q_pending', failed: 'q_failed' };
+    const OBST = { sending: 'q_sending', handed: 'q_verifying', pending: 'q_pending', failed: 'q_failed', discarded: 'q_discarded' };
+    const obSt = r => (r.status === 'pending' && r.pendingRetries > 0 && r.errorKind !== 'offline' ? 'q_retry' : OBST[r.status]);
     items.forEach(e => {
       const id = psIdxId(e.fileName);
       const ob = obById.get(id);
       let status;
       if (okMap[id]) status = 'ok';
-      else if (ob && OBST[ob.status]) status = OBST[ob.status];
+      else if (ob && OBST[ob.status]) status = obSt(ob);
       else if (verifyAvailable) status = now - (e.ts || 0) < PS_ARCH_ABLAGE_MIN * 60000 ? 'wait' : 'fail';
       else status = 'ok_unchecked';
       rows.push({ key: 'i' + e.fileName, e, status, ob });
@@ -25967,14 +26033,16 @@ const ArchivProtokollView = ({ heute, onAlle } = {}) => {
     outbox.forEach(r => {
       const id = psIdxId(r.fileName);
       if (ids.has(id)) return;
-      const status = r.status === 'verified' ? 'ok' : OBST[r.status] || 'q_pending';
+      const status = r.status === 'verified' ? 'ok' : obSt(r) || 'q_pending';
       rows.push({ key: 'o' + r.archiveId, e: { fileName: r.fileName, typ: r.type, kunde: r.kunde, ruf: r.ruf, shopId: r.shopId, ts: r.createdAt }, status, ob: r });
     });
     queued.forEach(e => rows.push({ key: 'q' + e.fileName, e, status: 'wait_net' }));
     parked.forEach(e => rows.push({ key: 'p' + e.id, e, status: 'parked' }));
     psArchFailGet().filter(x => String(x.uid || '') === uid && (x.ts || 0) >= since && !ids.has(psIdxId(x.fileName)) && !okMap[psIdxId(x.fileName)]).forEach(e => rows.push({ key: 'f' + e.fileName, e, status: 'fail_send' }));
     rows.sort((a, b) => (b.e.ts || 0) - (a.e.ts || 0));
-    setSt({ loading: false, rows, error, verifyAvailable });
+    let alerts = [];
+    try { if (window.PSArchivQueue && uid) alerts = (await PSArchivQueue.queue('o2').alerts(uid, await PSArchivQueue.storageInfo())).filter(a => a.level !== 'info'); } catch (e) {}
+    setSt({ loading: false, rows, error, verifyAvailable, alerts });
   }, []);
   React.useEffect(() => { load(); }, [load]);
   const fmt = ts => {
@@ -25982,12 +26050,14 @@ const ArchivProtokollView = ({ heute, onAlle } = {}) => {
   };
   const shopName = id => (typeof SHOPS !== 'undefined' && SHOPS && SHOPS[id] && SHOPS[id].name) || id || '';
   const INFO = {
-    ok: { icon: '\u2705', text: 'Archivierung erfolgreich', sub: 'in SharePoint abgelegt', color: '#15803d' },
+    ok: { icon: '\u2705', text: 'Erfolgreich archiviert', sub: 'in SharePoint abgelegt (best\u00E4tigt)', color: '#15803d' },
     ok_unchecked: { icon: '\uD83D\uDCE4', text: 'An Archiv \u00FCbergeben', sub: 'Ablage konnte nicht gepr\u00FCft werden', color: '#0369a1' },
     q_sending: { icon: '\u23F3', text: 'Archivierung l\u00E4uft', sub: 'wird gerade \u00FCbertragen', color: '#1d4ed8' },
-    q_verifying: { icon: '\uD83D\uDD0E', text: 'Archivierung wird \u00FCberpr\u00FCft', sub: '\u00FCbergeben \u2013 Ablage in SharePoint noch nicht best\u00E4tigt', color: '#1d4ed8' },
-    q_pending: { icon: '\u23F3', text: 'Archivierung ausstehend', sub: 'auf diesem Ger\u00E4t gesichert \u2013 wird automatisch gesendet', color: '#b45309' },
-    q_failed: { icon: '\u274C', text: 'Archivierung fehlgeschlagen', sub: 'PDF ist auf diesem Ger\u00E4t gesichert \u2013 bitte erneut senden', color: '#dc2626' },
+    q_verifying: { icon: '\uD83D\uDD0E', text: 'An Archiv \u00FCbergeben \u2013 Best\u00E4tigung ausstehend', sub: 'Ablage in SharePoint wird gepr\u00FCft', color: '#1d4ed8' },
+    q_pending: { icon: '\u23F3', text: 'Lokal gesichert \u2013 Versand ausstehend', sub: 'wird automatisch gesendet, sobald die Verbindung steht', color: '#b45309' },
+    q_retry: { icon: '\uD83D\uDD01', text: 'Automatischer Wiederholungsversuch', sub: 'PDF ist gesichert \u2013 wird automatisch erneut gesendet', color: '#b45309' },
+    q_failed: { icon: '\u274C', text: 'Archivierung fehlgeschlagen \u2013 Eingriff erforderlich', sub: 'PDF ist auf diesem Ger\u00E4t gesichert \u2013 bitte erneut senden', color: '#dc2626' },
+    q_discarded: { icon: '\uD83D\uDDD1\uFE0F', text: 'Bewusst verworfen', sub: 'nicht im Archiv \u2013 Vorgang protokolliert', color: '#64748b' },
     wait: { icon: '\u23F3', text: 'Wird abgelegt \u2026', sub: 'wird noch in SharePoint abgelegt', color: '#b45309' },
     wait_net: { icon: '\u23F3', text: 'Wartet auf Verbindung', sub: 'wird automatisch nachgesendet', color: '#b45309' },
     parked: { icon: '\u23F3', text: 'Geparkt', sub: 'noch nicht gesendet \u2013 unter \u201EGeparkte Vorg\u00E4nge\u201C nachtragen', color: '#b45309' },
@@ -26009,9 +26079,14 @@ const ArchivProtokollView = ({ heute, onAlle } = {}) => {
         const deps = window.__psArchivQueueDeps ? window.__psArchivQueueDeps() : null;
         if (deps) await q.sendNow(ob.archiveId, deps);
       } else if (what === 'discard') {
+        // v3: Schutz vor versehentlichem Verwerfen – Grund ist Pflicht, danach Sicherheitsabfrage; wird protokolliert
+        let grund = '';
+        try { grund = String(window.prompt('Warum soll diese Archivierung verworfen werden? (Pflichtangabe, wird protokolliert)', '') || '').trim(); } catch (e) {}
         let ok = false;
-        try { ok = window.confirm('Diese Archivierung wirklich verwerfen? Die gesicherte PDF wird von diesem Gerät gelöscht und ist danach NICHT im Archiv.'); } catch (e) {}
-        if (ok) await q.discard(ob.archiveId, actor);
+        if (grund.length >= 3) {
+          try { ok = window.confirm('Diese Archivierung wirklich verwerfen? Die gesicherte PDF wird von diesem Gerät gelöscht und ist danach NICHT im Archiv.'); } catch (e) {}
+        }
+        if (ok) await q.discard(ob.archiveId, actor, grund);
       }
     } catch (e) {
       try { alertBox(e); } catch (_) {}
@@ -26037,7 +26112,7 @@ const ArchivProtokollView = ({ heute, onAlle } = {}) => {
     h('div', { style: { textAlign: 'right', maxWidth: '45%' } },
       h('div', { style: { fontSize: '12px', fontWeight: 800, color: I.color } }, I.text),
       h('div', { style: { fontSize: '10.5px', color: '#94a3b8' } }, I.sub),
-      r.ob && (r.status === 'q_failed' || r.status === 'q_pending') && r.ob.pdfBlob && h('div', { style: { display: 'flex', gap: '6px', justifyContent: 'flex-end', marginTop: '5px' } },
+      r.ob && (r.status === 'q_failed' || r.status === 'q_pending' || r.status === 'q_retry') && r.ob.pdfBlob && h('div', { style: { display: 'flex', gap: '6px', justifyContent: 'flex-end', marginTop: '5px' } },
         h('button', { type: 'button', disabled: busy === r.ob.archiveId, onClick: () => qAction(r.ob, 'retry'), style: { padding: '4px 9px', borderRadius: '8px', fontSize: '11px', fontWeight: 800, background: '#1e3a8a', color: '#fff', border: 'none', cursor: 'pointer' } }, busy === r.ob.archiveId ? '\u2026' : 'Erneut senden'),
         r.status === 'q_failed' && h('button', { type: 'button', disabled: busy === r.ob.archiveId, onClick: () => qAction(r.ob, 'discard'), style: { padding: '4px 9px', borderRadius: '8px', fontSize: '11px', fontWeight: 700, background: '#fff', color: '#64748b', border: '1px solid #cbd5e1', cursor: 'pointer' } }, 'Verwerfen'))));
   };
@@ -26059,14 +26134,14 @@ const ArchivProtokollView = ({ heute, onAlle } = {}) => {
   })();
   const cnt = f => st.rows.filter(r => f(r.status)).length;
   const isFail = x => x.indexOf('fail') === 0 || x === 'q_failed';
-  const isWait = x => x === 'wait' || x === 'wait_net' || x === 'parked' || x === 'ok_unchecked' || x === 'q_sending' || x === 'q_verifying' || x === 'q_pending';
+  const isWait = x => x === 'wait' || x === 'wait_net' || x === 'parked' || x === 'ok_unchecked' || x === 'q_sending' || x === 'q_verifying' || x === 'q_pending' || x === 'q_retry';
   const nOk = cnt(x => x === 'ok'), nFail = cnt(isFail), nWait = cnt(isWait);
   if (heute) {
     // Überblick: was habe ich HEUTE archiviert (Name, Art, Uhrzeit, Status)
     const d0 = new Date(); d0.setHours(0, 0, 0, 0);
     const hr = st.rows.filter(r => (r.e.ts || 0) >= d0.getTime());
     const zeit = ts => { try { return new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
-    const KURZ = { ok: 'abgelegt', ok_unchecked: '\u00FCbergeben', wait: 'wird abgelegt \u2026', wait_net: 'wartet auf Verbindung', parked: 'geparkt', fail: 'fehlgeschlagen', fail_send: 'fehlgeschlagen', q_sending: 'l\u00E4uft', q_verifying: 'wird \u00FCberpr\u00FCft', q_pending: 'ausstehend', q_failed: 'fehlgeschlagen' };
+    const KURZ = { ok: 'abgelegt', ok_unchecked: '\u00FCbergeben', wait: 'wird abgelegt \u2026', wait_net: 'wartet auf Verbindung', parked: 'geparkt', fail: 'fehlgeschlagen', fail_send: 'fehlgeschlagen', q_sending: 'l\u00E4uft', q_verifying: 'Best\u00E4tigung ausstehend', q_pending: 'Versand ausstehend', q_retry: 'Wiederholung', q_failed: 'fehlgeschlagen', q_discarded: 'verworfen' };
     const MAXH = 5;
     const zeile = (r, i, arr) => {
       const e = r.e, I = INFO[r.status];
@@ -26101,6 +26176,9 @@ const ArchivProtokollView = ({ heute, onAlle } = {}) => {
       h('button', { onClick: () => { try { window.__psArchivQueueRun && window.__psArchivQueueRun(); } catch (e) {} load(); }, style: { marginLeft: 'auto', padding: '5px 11px', borderRadius: '8px', fontSize: '11px', fontWeight: 700, background: '#fff', color: '#1e3a8a', border: '1px solid #cbd5e1', cursor: 'pointer' } }, '\u21BB Aktualisieren'),
       isAdmin && h('button', { type: 'button', onClick: () => setDiagOpen(true), style: { padding: '5px 11px', borderRadius: '8px', fontSize: '11px', fontWeight: 700, background: '#fff', color: '#7c2d12', border: '1px solid #fed7aa', cursor: 'pointer' } }, '\uD83E\uDE7A Archiv-Diagnose (Admin)')),
     diagOpen && isAdmin && h(PsArchivDiagnose, { onClose: () => setDiagOpen(false) }),
+    (st.alerts || []).length > 0 && h('div', { style: { fontSize: '12px', fontWeight: 700, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '10px', padding: '8px 12px', lineHeight: 1.5 } },
+      st.alerts.map(a => h('div', { key: a.code }, a.code === 'failed' ? '\u274C ' + a.count + ' fehlgeschlagen \u2013 bitte unten \u201EErneut senden\u201C.' : a.code === 'pending-old' ? '\u23F3 ' + a.count + ' seit \u00FCber 2 Std. nicht versendet \u2013 Internetverbindung pr\u00FCfen.' : a.code === 'unverified-old' ? '\uD83D\uDD0E ' + a.count + ' seit \u00FCber 24 Std. ohne Best\u00E4tigung \u2013 wird dem Administrator gemeldet.' : a.code === 'escalate' ? '\u26A0\uFE0F ' + a.count + ' seit \u00FCber 3 Tagen offen \u2013 Administrator ist eingebunden.' : a.code === 'storage-low' ? '\uD83D\uDCBE Ger\u00E4tespeicher fast voll.' : '')),
+      h('div', { style: { fontWeight: 600, color: '#9a3412', marginTop: '2px' } }, 'Gesicherte PDFs werden nie automatisch gel\u00F6scht.')),
     st.error && h('div', { style: { fontSize: '12px', fontWeight: 700, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '8px 12px' } }, '\u26A0\uFE0F ' + st.error),
     st.loading ? h('div', { style: { padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', fontWeight: 600 } }, '\u23F3 Lade Archiv-Protokoll\u2026')
       : (st.rows.length === 0 && !st.error) ? h('div', { style: { padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', fontWeight: 600, background: '#fff', borderRadius: '14px', border: '1px solid #e2e8f0' } }, '\uD83D\uDCED Noch keine Archivierungen in den letzten 4 Wochen')
@@ -26167,11 +26245,14 @@ const PsArchivDiagnose = ({ onClose }) => {
   const h = React.createElement;
   const [days, setDays] = React.useState(30);
   const [st, setSt] = React.useState({ busy: '', err: '', device: null, idx: null, sp: null });
+  const [mon, setMon] = React.useState(null); // v3: zentraler Monitor { jobs, since, rec, at }
+  const [mf, setMf] = React.useState({ shopId: '', uid: '', type: '', status: '' });
   const cfg = (window.__psArchCfgGetter && window.__psArchCfgGetter()) || {};
   const shopIds = (typeof SHOPS !== 'undefined' && SHOPS) ? Object.keys(SHOPS) : [];
   const device = React.useCallback(async () => {
     const d = { outbox: [], parked: [], idxQueue: [], fails: [], log: [] };
-    try { if (window.PSArchivQueue) d.outbox = (await PSArchivQueue.queue('o2').all()).map(r => ({ archiveId: r.archiveId, uid: r.uid, shopId: r.shopId, status: r.status, fileName: r.fileName, sends: r.sends || 0, lastError: r.lastError || '', createdAt: r.createdAt, hasPdf: !!r.pdfBlob })); } catch (e) {}
+    try { if (window.PSArchivQueue) d.outbox = (await PSArchivQueue.queue('o2').all()).map(r => ({ archiveId: r.archiveId, uid: r.uid, shopId: r.shopId, status: r.status, fileName: r.fileName, sends: r.sends || 0, lastError: r.lastError || '', createdAt: r.createdAt, ts: r.createdAt, hasPdf: !!r.pdfBlob })); } catch (e) {}
+    try { if (window.PSArchivQueue) d.alerts = await PSArchivQueue.queue('o2').alerts('', await PSArchivQueue.storageInfo()); } catch (e) { d.alerts = []; }
     try { d.parked = (await listParkedArchive()).map(p => ({ id: p.id, uid: p.uid || '', shopId: p.shopId || '', type: p.type, ts: p.ts, overdue: !!p.overdue, ready: !!p.readyToAutoSend, fileName: p.dateiname || '' })); } catch (e) {}
     try { d.idxQueue = psIdxQueueGet().map(x => ({ fileName: x.fileName, uid: x.uid, shopId: x.shopId, ts: x.ts })); } catch (e) {}
     try { d.fails = psArchFailGet().map(x => ({ fileName: x.fileName, uid: x.uid, shopId: x.shopId, ts: x.ts, reason: x.reason })); } catch (e) {}
@@ -26226,9 +26307,40 @@ const PsArchivDiagnose = ({ onClose }) => {
       setSt(x => ({ ...x, busy: '', err: 'SharePoint-Abgleich nicht möglich: ' + (e && (e.code || e.message) || e) }));
     }
   };
+  // v3: zentraler Archivierungsmonitor – alle synchronisierten Vorgänge aller Geräte (nur Admin; Firestore-Regel)
+  const loadMon = async () => {
+    setSt(x => ({ ...x, busy: 'mon', err: '' }));
+    try {
+      const db = psIdxDb();
+      if (!db) throw new Error('Keine Datenbankverbindung.');
+      const since = Date.now() - days * 86400000;
+      let docs;
+      try {
+        docs = (await db.collection(PS_ARCH_JOBS_COLL).where('createdAt', '>=', since).limit(5000).get()).docs;
+      } catch (e) {
+        if (e && e.code === 'permission-denied') throw new Error('Keine Leseberechtigung für „archiv_jobs“ – Firestore-Regel fehlt (Anleitung: docs/ARCHIVIERUNG-V3.md).');
+        throw e;
+      }
+      const jobs = docs.map(x => ({ ...x.data(), archiveId: x.id }));
+      let rec = null;
+      if (st.idx) {
+        const index = await Promise.all(st.idx.items.filter(e => e && e.fileName).map(async e => ({ key: await PSArchivQueue.fileKeyOf(e.fileName), uid: String(e.uid || ''), shopId: String(e.shopId || '').toLowerCase(), src: e.src, ts: Number(e.ts) || 0, hasKeys: !(Array.isArray(e.keys) && e.keys.length === 0 && (e.kunde || e.nsn)) })));
+        const sp = new Map();
+        if (st.sp) {
+          const miss = new Set((st.sp.missing || []).map(m => psIdxId(m.fileName)));
+          await Promise.all(st.idx.items.filter(e => e && e.fileName && (e.ts || 0) < Date.now() - PS_ARCH_ABLAGE_MIN * 60000).map(async e => { sp.set(await PSArchivQueue.fileKeyOf(e.fileName), !miss.has(psIdxId(e.fileName))); }));
+        }
+        rec = PSArchivQueue.reconcile({ jobs, index, sp });
+      }
+      setMon({ jobs, since, rec, at: Date.now() });
+      setSt(x => ({ ...x, busy: '' }));
+    } catch (e) {
+      setSt(x => ({ ...x, busy: '', err: 'Archivierungsmonitor: ' + (e && (e.message || e.code) || e) }));
+    }
+  };
   const exportJson = () => {
     try {
-      const blob = new Blob([JSON.stringify({ erstellt: new Date().toISOString(), version: window.APP_VERSION || '', tage: days, geraet: st.device, index: st.idx && st.idx.a, sharepoint: st.sp }, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify({ erstellt: new Date().toISOString(), version: window.APP_VERSION || '', marke: PS_ARCH_BRAND, tage: days, geraet: st.device, index: st.idx && st.idx.a, sharepoint: st.sp, monitor: mon && { kennzahlen: PSArchivQueue.computeMetrics(PSArchivQueue.filterJobs(mon.jobs, mf)), filter: mf, abgleich: mon.rec } }, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = 'archiv-diagnose-' + (window.PSArchivQueue ? PSArchivQueue.localDate() : 'heute') + '.json';
@@ -26254,11 +26366,45 @@ const PsArchivDiagnose = ({ onClose }) => {
       st.err && h('div', { style: { marginTop: '8px', fontSize: '12px', fontWeight: 700, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '8px 10px' } }, st.err),
       h('div', { style: { marginTop: '12px', fontSize: '13px', fontWeight: 900, color: '#0f172a' } }, 'Dieses Gerät'),
       !d ? h('div', { style: { fontSize: '12px', color: '#94a3b8' } }, 'Lade \u2026') : h('div', null,
+        (d.alerts || []).length > 0 && sec('Warnungen auf diesem Gerät', d.alerts, a => a.code + ' · ' + a.level + ' · Anzahl ' + a.count + (a.bytes ? ' · ' + Math.round(a.bytes / 1048576 * 10) / 10 + ' MB PDF lokal' : '') + (a.quota ? ' · Speicher ' + Math.round((a.usage || 0) / a.quota * 100) + ' %' : '')),
         sec('Archiv-Ausgang: nicht bestätigte Vorgänge', d.outbox.filter(r => r.status !== 'verified'), r => r.status + ' · ' + line(r) + ' · Versuche ' + r.sends + (r.lastError ? ' · ' + r.lastError : '') + (r.hasPdf ? ' · PDF gesichert' : ''), 'Alle Benutzer dieses Geräts. Einträge anderer Mitarbeiter werden mit deren Angaben gesendet, aber nie umgeschrieben.'),
         sec('Geparkte Vorgänge', d.parked, r => (r.overdue ? '\u00FCberf\u00E4llig \u00B7 ' : '') + (r.ready ? 'versandbereit \u00B7 ' : 'Nummer fehlt \u00B7 ') + (r.type || '') + ' · ' + line(r)),
         sec('Suchindex-Einträge, die auf das Schreiben warten', d.idxQueue, line),
         sec('Protokollierte Übergabe-Fehler (30 Tage)', d.fails, r => line(r) + ' · ' + (r.reason || '')),
         sec('Technisches Protokoll (ohne Kundendaten)', d.log.slice().reverse(), r => fmt(r.t) + ' · ' + r.step + ' · ' + r.status + (r.code ? ' · ' + r.code : '') + ' · ' + r.archiveId + ' · uid ' + String(r.uid || '').slice(0, 8) + ' · ' + (r.shopId || '') + (r.attempt ? ' · Versuch ' + r.attempt : ''))),
+      (() => {
+        // ── v3: Archivierungsmonitor (zentral, alle Geräte) ──
+        const shopsAll = (typeof SHOPS !== 'undefined' && SHOPS) ? Object.keys(SHOPS) : [];
+        const sel = (k, opts, label) => h('select', { value: mf[k], onChange: e => setMf(o => ({ ...o, [k]: e.target.value })), 'aria-label': label, style: { padding: '6px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px', maxWidth: '170px' } }, [h('option', { key: '', value: '' }, label + ': alle')].concat(opts.map(([v, t]) => h('option', { key: v, value: v }, t))));
+        const people = mon ? Array.from(new Map(mon.jobs.filter(j => j.uid).map(j => [j.uid, j.employeeName || String(j.uid).slice(0, 8)])).entries()).sort((x, y) => String(x[1]).localeCompare(String(y[1]))) : [];
+        const fj = mon ? PSArchivQueue.filterJobs(mon.jobs, mf) : [];
+        const m = mon ? PSArchivQueue.computeMetrics(fj) : null;
+        const pct = v => v == null ? '–' : (Math.round(v * 1000) / 10).toLocaleString('de-DE') + ' %';
+        const dur = ms => !ms ? '–' : ms < 60000 ? Math.round(ms / 1000) + ' s' : Math.round(ms / 6000) / 10 + ' Min.';
+        const tile = (t, v, c) => h('div', { style: { flex: '1 1 110px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '8px 10px' } }, h('div', { style: { fontSize: '10.5px', color: '#64748b', fontWeight: 700 } }, t), h('div', { style: { fontSize: '17px', fontWeight: 900, color: c || '#0f172a' } }, v));
+        const jl = j => (j.status || '') + ' · ' + (j.type || '') + ' · ' + (j.shopId || '–') + ' · ' + (j.employeeName || String(j.uid || '').slice(0, 8)) + ' · ' + fmt(j.createdAt) + ' · Versuche ' + (j.sends || 0) + (j.lastError ? ' · ' + j.lastError : '') + (j.pdfLocal ? ' · PDF auf Gerät' : '') + ' · ' + j.archiveId;
+        const ISSUE = { 'job-missing-pdf': 'Auftrag vorhanden, PDF fehlt in SharePoint', 'pdf-no-index': 'PDF vorhanden, Suchindex fehlt', 'index-no-pdf': 'Suchindex vorhanden, PDF fehlt', 'wrong-shop': 'Falsche Standortzuordnung', 'wrong-employee': 'Falsche Mitarbeiterzuordnung', duplicate: 'Archivierung mehrfach vorhanden', 'verified-not-searchable': 'Bestätigt, aber über die Kundensuche nicht auffindbar' };
+        return h('div', null,
+          h('div', { style: { marginTop: '16px', fontSize: '13px', fontWeight: 900, color: '#0f172a' } }, 'Archivierungsmonitor (zentral, alle Geräte) \u00B7 ' + (PS_ARCH_BRAND === 'telekom' ? 'Telekom / Fachhandel' : 'o2')),
+          h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap' } },
+            btn(st.busy === 'mon' ? '\u23F3 Lade \u2026' : (mon ? 'Monitor aktualisieren' : 'Monitor laden'), loadMon, !!st.busy),
+            mon && sel('shopId', shopsAll.map(id => [id, (SHOPS[id] && (SHOPS[id].label || SHOPS[id].name)) || id]), 'Standort'),
+            mon && sel('uid', people, 'Mitarbeiter'),
+            mon && sel('type', [['angebot', 'Angebot'], ['abschluss', 'Abschluss']], 'Art'),
+            mon && sel('status', [['verified', 'bestätigt'], ['handed', 'Bestätigung ausstehend'], ['pending', 'Versand ausstehend'], ['sending', 'läuft'], ['failed', 'fehlgeschlagen'], ['discarded', 'verworfen']], 'Status')),
+          !mon ? h('div', { style: { fontSize: '11px', color: '#94a3b8', marginTop: '6px' } }, 'Zeitraum = Auswahl unten (letzte ' + days + ' Tage). Für den Abgleich vorher „Suchindex analysieren“ und „Mit SharePoint abgleichen“ ausführen.')
+            : h('div', null,
+              h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' } },
+                tile('Aufträge', m.total), tile('Bestätigt', m.verified, '#15803d'), tile('Bestätigung ausst.', m.handed, '#1d4ed8'), tile('Versand ausst.', m.pending, '#b45309'),
+                tile('Fehlgeschlagen', m.failed, m.failed ? '#dc2626' : null), tile('Ohne Suchindex', m.noIndex, m.noIndex ? '#b45309' : null), tile('Verworfen', m.discarded),
+                tile('Archivierungsquote', pct(m.rate), m.rate != null && m.rate < 0.98 ? '#b45309' : '#15803d'), tile('Ø Dauer', dur(m.avgDurationMs)), tile('Wiederholungen', m.retries), tile('> 72 h offen', m.escalated, m.escalated ? '#dc2626' : null)),
+              h('div', { style: { fontSize: '11px', color: '#475569', marginTop: '6px', lineHeight: 1.5 } },
+                'Quote = bestätigt \u00F7 gestartet (offene, fehlgeschlagene und verworfene Vorgänge zählen mit). Letzte Synchronisation eines Geräts: ' + fmt(m.lastSyncAt) + '. Vollständig offline erstellte Vorgänge erscheinen erst, wenn das Gerät wieder online war. Stand: ' + fmt(mon.at) + '.'),
+              sec('Letzte erfolgreiche Archivierung je Standort', Object.keys(m.lastVerifiedByShop).sort().map(k => ({ k, t: m.lastVerifiedByShop[k] })), r => ((SHOPS[r.k] && (SHOPS[r.k].label || SHOPS[r.k].name)) || r.k) + ' · ' + fmt(r.t)),
+              sec('Offene und fehlgeschlagene Vorgänge', fj.filter(j => PSArchivQueue.isOpen(j)).sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0)), jl, 'Ältester zuerst. Offene Vorgänge werden auf dem jeweiligen Gerät automatisch weiterbearbeitet, sobald die App dort geöffnet ist.'),
+              mon.rec ? sec('Abgleich Auftrag ↔ SharePoint ↔ Suchindex', mon.rec.issues, i => (ISSUE[i.code] || i.code) + ' · ' + (i.shopId || '–') + ' · uid ' + String(i.uid || '–').slice(0, 8) + ' · ' + (i.repair === 'owner-device' ? 'wird automatisch auf dem Gerät des Mitarbeiters nachgeholt' : 'Prüfung durch Admin') + (i.archiveId ? ' · ' + i.archiveId : ''), 'Es wird nie automatisch neu zugeordnet. Eindeutig behebbare Fälle (fehlender Suchindex eigener Archivierungen, erneuter Versand mit gesicherter PDF) erledigt das Gerät des Mitarbeiters selbst.')
+                : h('div', { style: { fontSize: '11px', color: '#94a3b8', marginTop: '6px' } }, 'Abgleich: zuerst „Suchindex analysieren“ (und optional „Mit SharePoint abgleichen“), dann Monitor aktualisieren.')));
+      })(),
       h('div', { style: { marginTop: '16px', fontSize: '13px', fontWeight: 900, color: '#0f172a' } }, 'Suchindex (alle Shops)'),
       h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap' } },
         h('select', { value: days, onChange: e => setDays(Number(e.target.value)), style: { padding: '6px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px' } }, [7, 30, 90, 180].map(n => h('option', { key: n, value: n }, 'letzte ' + n + ' Tage'))),
@@ -32093,6 +32239,22 @@ const psIdxDb = () => {
 // Dokument-ID = Dateiname (klein, nur sichere Zeichen) → gleiche Datei = gleiches Dokument, nie doppelt
 const psIdxId = fileName => String(fileName || '').toLowerCase().replace(/[^a-z0-9._+\-]/g, '_').slice(0, 180);
 
+// v55.41: Sicherheitsnetz der Mitarbeiter-Suche. Liefert die Suche über den Suchschlüssel nichts (oder geht nicht, z. B. fehlender
+// Datenbank-Index), werden ALLE Einträge des eigenen Standorts geholt (nur Gleichheitsfilter auf shopId, gleiche Berechtigung wie
+// die Systemprüfung) und hier im Gerät gefiltert. 60 s zwischengespeichert, wird nach jedem neuen Eintrag geleert.
+const PS_IDX_ALL_LIM = 2000;
+const __psIdxShopCache = new Map();
+const psIdxShopAll = async (db, shop) => {
+  const key = String(window.__PS_USER_UID || '') + '|' + shop;
+  const c = __psIdxShopCache.get(key);
+  if (c && Date.now() - c.ts < 60000) return c.docs;
+  const snap = await db.collection(PS_IDX_COLL).where('shopId', '==', shop).limit(PS_IDX_ALL_LIM).get();
+  const docs = [];
+  snap.forEach(d => docs.push(d));
+  __psIdxShopCache.set(key, { ts: Date.now(), docs });
+  return docs;
+};
+
 // Suchschlüssel: Namensanfänge (3–12 Zeichen je Wort) und Rufnummern-Anfänge (ab 7 Stellen)
 const psIdxKeys = (kunde, nsn) => {
   const keys = [];
@@ -32195,6 +32357,7 @@ const psIdxFlush = async timeoutMs => {
           await psIdxWriteOne(db, entry, timeoutMs || 6000);
           psIdxQueueSet(psIdxQueueGet().filter(x => psIdxId(x && x.fileName) !== psIdxId(entry.fileName)));
           written++;
+          try { __psIdxShopCache.clear(); } catch (_) {}
         } catch (e) {
           if (e && e.code === 'permission-denied') {
             try { console.warn('[SUCHINDEX] Schreiben abgelehnt (Firestore-Regeln?)'); } catch (_) {}
@@ -32292,7 +32455,8 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
   if (psArchOffline()) throw psArchErr('network');
   const db = psIdxDb();
   if (!db) throw psArchErr('server');
-  const allowed = cfg.allowedIds || [];
+  // v55.44 (in Hall nachgezogen mit 56.0-beta.7): Mitarbeiter suchen NUR im Shop, bei dem sie angemeldet sind (scopeShop) – auch wenn ihr Profil weitere Standorte freigibt.
+  const allowed = !cfg.isAdmin && cfg.scopeShop ? [cfg.scopeShop] : cfg.allowedIds || [];
   const allAccess = !!cfg.isAdmin || !!(cfg.allShopIds && cfg.allShopIds.length && allowed.length >= cfg.allShopIds.length);
   let shops; // null = ohne Standort-Einschränkung (Admin / alle Standorte)
   if (opts.shop) {
@@ -32309,6 +32473,36 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
   };
   const snaps = [];
   let denied = 0, failed = 0;
+  const info = [];
+  let extraLimited = false;
+  // Je Standort: erst die schnelle Suche über den Suchschlüssel; ohne Treffer / bei Fehler (außer "verweigert") alle Einträge des Standorts prüfen
+  const fetchShop = async shop => {
+    let snap = null, err = null;
+    try {
+      snap = await run(shop);
+    } catch (e) {
+      err = e;
+    }
+    if (snap && snap.size > 0) return { snap };
+    if (err && err.code === 'permission-denied') throw err; // Berechtigung wird nie umgangen
+    try {
+      const all = await psIdxShopAll(db, shop);
+      // Selbsttest-Einträge zählen nicht; neuestes Datum zeigt, ob der Suchindex des Standorts aktuell ist
+      let cnt = 0, newest = '';
+      all.forEach(d => {
+        const x = d.data() || {};
+        if (/^_selftest_/.test(String(x.fileName || ''))) return;
+        cnt++;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(x.datum || '')) && x.datum > newest) newest = x.datum;
+      });
+      info.push({ s: shop, n: cnt, d: newest });
+      if (all.length >= PS_IDX_ALL_LIM) extraLimited = true;
+      return { snap: { size: 0, forEach: fn => all.forEach(fn) } };
+    } catch (e2) {
+      if (snap) return { snap };
+      throw e2;
+    }
+  };
   if (shops === null) {
     try {
       snaps.push(await run(''));
@@ -32319,16 +32513,16 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
     }
   }
   if (shops !== null) {
-    const rs = await Promise.allSettled(shops.map(run));
+    const rs = await Promise.allSettled(shops.map(fetchShop));
     rs.forEach(r => {
-      if (r.status === 'fulfilled') snaps.push(r.value);
+      if (r.status === 'fulfilled') snaps.push(r.value.snap);
       else if (r.reason && r.reason.code === 'permission-denied') denied++;
       else failed++;
     });
     if (!snaps.length && shops.length) throw psIdxErr({ code: denied ? 'permission-denied' : 'unavailable' });
   }
   const byId = new Map();
-  let limited = false;
+  let limited = extraLimited;
   snaps.forEach(s => {
     if (s.size >= LIM) limited = true;
     s.forEach(d => {
@@ -32343,7 +32537,7 @@ const psIdxSearch = async (cfg, rawQuery, opts) => {
     }
     return (b.ts || 0) - (a.ts || 0);
   });
-  return { items, pq, limited };
+  return { items, pq, limited, info };
 };
 
 // Angebote (Cloud) + PDFs zu Karten zusammenführen. Zuordnung NUR über die gespeicherte Angebots-ID.
@@ -34409,10 +34603,11 @@ function App() {
     url: PENCIL_ARCHIV_FLOW_URL,
     allowedIds: PS_GET_ALLOWED_SHOP_IDS(),
     isAdmin: PS_IS_ADMIN(),
+    scopeShop: PS_IS_ADMIN() ? '' : CURRENT_SHOP_ID, // v3-Fix: wie index.html (v55.44) – Mitarbeiter suchen nur im angemeldeten Shop
     allShopIds: Object.keys(SHOPS)
   });
   window.__psArchCfgGetter = archivCfg; // v55.12: für den automatischen Index-Abgleich beim Start
-  const archivShops = () => PS_GET_ALLOWED_SHOP_IDS().map(id => ({
+  const archivShops = () => (PS_IS_ADMIN() ? PS_GET_ALLOWED_SHOP_IDS() : [CURRENT_SHOP_ID]).map(id => ({
     id,
     name: SHOPS[id] && SHOPS[id].name || id
   }));
@@ -44495,7 +44690,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
           lastSuccessAt: 0
         });
         const _nowMs = Date.now();
-        if (_guard.lastSuccessKey === _dedupeKey && _nowMs - (_guard.lastSuccessAt || 0) < ARCHIVE_DUPLICATE_WINDOW_MS) {
+        // v3: Der Archiv-Ausgang verhindert Doppelversand selbst (ein Versand je archiveId). Seine Wiederholungen dürfen
+        // NICHT als "Doppelversand verhindert" mit ok:true beantwortet werden – sonst gälte ein nicht gesendeter Versuch als übergeben.
+        if (!opts.allowRepeat && _guard.lastSuccessKey === _dedupeKey && _nowMs - (_guard.lastSuccessAt || 0) < ARCHIVE_DUPLICATE_WINDOW_MS) {
           try { console.warn('[ARCHIV-FLOW] Doppelversand verhindert:', archiveFileName); } catch (e) {}
           return { ok: true, handedToFlow: true, duplicatePrevented: true };
         }
@@ -45090,6 +45287,7 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     send: async rec => {
       const r = await sendArchivCopyToNewFlow(rec.pdfBlob, {
         intent: ARCHIVE_MANUAL_INTENT,
+        allowRepeat: true, // v3: Dublettenschutz übernimmt der Archiv-Ausgang (gleicher Dateiname, ein Versand je Vorgang)
         type: rec.type,
         agent: rec.agent,
         dsl: rec.dsl === 'ja' ? 'ja' : 'nein',
@@ -45103,6 +45301,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     },
     verify: names => psArchVerify(archivCfg(), names),
     recordIndex: rec => psIdxRecordArchive(rec.fileName, rec.subject, { uid: rec.uid, shopId: rec.shopId, ts: rec.handedAt || rec.createdAt, kunde: rec.kunde, ruf: rec.ruf, offerId: rec.offerId }),
+    indexExists: rec => psArchIndexExists(rec), // v3: Selbstreparatur fehlender Suchindex-Einträge (nur eigene)
+    syncJob: summary => psArchSyncJob(summary), // v3: zentraler Archivierungsmonitor (ohne Kundendaten)
     onEvent: ev => {
       try {
         const r = ev.rec || {};
@@ -45113,7 +45313,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       try { refreshParkedCount(); } catch (e) {}
     }
   });
-  window.__psArchivQueueDeps = archivQueueDeps; // für Archiv-Ansicht/Diagnose (gleiche Wege wie beim Archivieren)
+  window.__psArchivQueueDeps = archivQueueDeps;
+  try { window.__psToast = t => triggerToast(t); } catch (e) {} // für Archiv-Ansicht/Diagnose (gleiche Wege wie beim Archivieren)
   // Eindeutiges Kennzeichen je Beratung + Kennung: Wiederholen/Doppeltipp → gleicher Dateiname (keine Dubletten),
   // neue Beratung (resetCustomerState) → neues Kennzeichen.
   const archivTokenRef = useRef({});
@@ -45134,8 +45335,9 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       try { triggerToast('⚠️ Nicht angemeldet – bitte neu anmelden. Vorgang bleibt geöffnet.'); } catch (e) {}
       return { ok: false, error: new Error('Keine Benutzer-ID') };
     }
-    if (!(await PSArchivQueue.isPdfBlob(blob))) {
-      try { PSArchivQueue.log({ uid, step: 'pdf-check', status: 'failed', code: 'no-pdf' }); } catch (e) {}
+    const _pdfCheck = PSArchivQueue.checkPdf ? await PSArchivQueue.checkPdf(blob) : { ok: await PSArchivQueue.isPdfBlob(blob), code: 'no-pdf' };
+    if (!_pdfCheck.ok) {
+      try { PSArchivQueue.log({ uid, step: 'pdf-check', status: 'failed', code: _pdfCheck.code || 'no-pdf' }); } catch (e) {}
       try { triggerToast('⚠️ Archiv-PDF konnte nicht korrekt erstellt werden – bitte erneut versuchen. Vorgang bleibt geöffnet.'); } catch (e) {}
       return { ok: false, status: 'failed', error: new Error('Archiv-PDF ungültig') };
     }
@@ -45188,11 +45390,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
     const out = await q.sendNow(rec.archiveId, archivQueueDeps());
     try { refreshParkedCount(); } catch (e) {}
     if (out && out.status === 'handed') {
-      try { triggerToast('📤 An das Archiv übergeben – Ablage wird geprüft …'); } catch (e) {}
+      try { triggerToast('📤 An das Archiv übergeben – Bestätigung ausstehend …'); } catch (e) {}
       return { ok: true, handedToFlow: true, archiveId: out.archiveId, status: 'handed' };
     }
     if (out && out.status === 'pending') {
-      try { triggerToast('⏳ Archivierung ausstehend – wird automatisch gesendet, sobald die Verbindung steht. Nichts geht verloren.'); } catch (e) {}
+      try { triggerToast('⏳ Lokal gesichert – Versand ausstehend. Wird automatisch gesendet, sobald die Verbindung steht.'); } catch (e) {}
       return { ok: true, queued: true, archiveId: out.archiveId, status: 'pending' };
     }
     try { psArchFailLog(dateiname, betreff, new Error(out && out.lastError || 'failed')); } catch (e) {}
@@ -45803,6 +46005,11 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       Promise.resolve(autoFlushParkedArchive()).catch(() => {}).then(run);
     }, 6000);
     const iv = setInterval(run, 60000);
+    // v3: Browser soll gesicherte PDFs nie selbstständig räumen (Speicherdruck / Safari-7-Tage-Regel für Websites)
+    try { PSArchivQueue.requestPersistence && PSArchivQueue.requestPersistence(); } catch (e) {}
+    // v3: Warnungen (fehlgeschlagen, lange ausstehend/unbestätigt, Speicher knapp) – nach dem Start und alle 30 Min.
+    const tA = setTimeout(() => { psArchAlertCheck(); }, 20000);
+    const ivA = setInterval(() => { psArchAlertCheck(); }, 30 * 60000);
     const soon = () => setTimeout(run, 2500);
     const onConn = e => { if (e && e.detail && e.detail.offline === false) soon(); };
     const onVis = () => { if (document.visibilityState === 'visible') soon(); };
@@ -45814,6 +46021,8 @@ input::placeholder,textarea::placeholder{color:transparent!important;opacity:0!i
       stopped = true;
       clearTimeout(t0);
       clearInterval(iv);
+      clearTimeout(tA);
+      clearInterval(ivA);
       window.removeEventListener('online', soon);
       window.removeEventListener('ps-connectivity', onConn);
       document.removeEventListener('visibilitychange', onVis);

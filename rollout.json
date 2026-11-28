@@ -1,4 +1,4 @@
 {
   "neu": ["schwaebisch-hall"],
-  "hinweis": "Shop-IDs, die index-neu.html bekommen, z. B. [\"schwaebisch-hall\"]. Leer = alle Shops bleiben auf der bisherigen App (index.html). Stand 27.11.2026: Hall-Test auf index-neu.html (56.0-beta.5, Smart Scan 2 + Smart Capture QR-Import). Rueckweg: Eintrag streichen."
+  "hinweis": "Shop-IDs, die index-neu.html bekommen, z. B. [\"schwaebisch-hall\"]. Leer = alle Shops bleiben auf der bisherigen App (index.html). Stand 28.11.2026: Hall-Test auf index-neu.html (56.0-beta.7, Smart Scan 2 + Smart Capture QR-Import + Archivierung v3). Rueckweg: Eintrag streichen."
 }

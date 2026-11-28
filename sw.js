@@ -1,7 +1,7 @@
 // Pencil Selling – o2 – Service Worker
 // Beim Update NUR diese Versionsnummer hochzählen -> alte Caches werden entfernt.
-const CACHE = "pencil-o2-v39";
-const SHELL = ["./", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
+const CACHE = "pencil-o2-v40";
+const SHELL = ["./", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./archive-queue.js?v=3"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
